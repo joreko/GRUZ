@@ -1,12 +1,14 @@
 <script lang="ts">
   import { getVersion } from '@tauri-apps/api/app'
-  import { onMount } from 'svelte'
-  import { formatDate } from '$lib/utils/format'
+  import { onMount, onDestroy } from 'svelte'
+  import { formatDate, formatBytes } from '$lib/utils/format'
   import { commands } from '$lib/bridge/commands'
+  import { onUpdateProgress, type UpdateProgress } from '$lib/bridge/events'
   import {
     fetchChangelog,
-    getBaselineCounter,
     displayVersion,
+    versionCounter,
+    compareVersions,
     type ReleaseChangelog,
   } from '$lib/utils/changelog'
 
@@ -17,9 +19,13 @@
   let loading = $state(true)
   let error = $state('')
   let currentVersion = $state('')
-  let baselineCounter = $state<number | null>(null)
   let installing = $state<string | null>(null)  // tag который устанавливается
+  let confirmTag = $state<string | null>(null)   // tag ожидающий подтверждения
+  let progress = $state<UpdateProgress | null>(null)
+  let installError = $state('')                   // ошибка скачивания/установки
   let showBeta = $state(false)
+
+  let unlistenProgress: (() => void) | null = null
 
   // По умолчанию бета если нет стабильных
   $effect(() => {
@@ -30,9 +36,14 @@
     releases.filter(r => showBeta ? r.prerelease : !r.prerelease)
   )
 
+  // Счётчик текущей установленной версии (= patch = номер коммита)
+  const currentCounter = $derived(versionCounter(currentVersion))
+
   onMount(async () => {
     currentVersion = await getVersion()
-    baselineCounter = getBaselineCounter()
+    unlistenProgress = await onUpdateProgress((p) => {
+      progress = p
+    })
     try {
       releases = await fetchChangelog()
     } catch {
@@ -42,17 +53,45 @@
     }
   })
 
-  async function installRelease(tag: string, e: MouseEvent) {
-    e.stopPropagation()
+  onDestroy(() => unlistenProgress?.())
+
+  // Отношение релиза к установленной версии
+  type RelKind = 'current' | 'newer' | 'older'
+  function relKind(tag: string): RelKind {
+    const v = tag.replace(/^v/, '')
+    const cmp = compareVersions(v, currentVersion)
+    if (cmp === 0) return 'current'
+    return cmp > 0 ? 'newer' : 'older'
+  }
+
+  function actionLabel(tag: string): string {
+    return relKind(tag) === 'older' ? 'откатиться' : 'обновить'
+  }
+
+  function startInstall(tag: string) {
+    if (installing) return
+    confirmTag = tag
+  }
+
+  async function confirmInstall(tag: string) {
+    confirmTag = null
     if (installing) return
     const version = tag.replace(/^v/, '')
     const url = `https://github.com/${REPO}/releases/download/${tag}/GRUZ_${version}_Setup.exe`
     installing = tag
+    installError = ''
+    progress = { downloaded: 0, total: null, pct: null, done: false }
     try {
       await commands.installVersion(url)
-    } catch {
+    } catch (e) {
       installing = null
+      progress = null
+      installError = `Не удалось установить v${version}: ${e}`
     }
+  }
+
+  function cancelConfirm() {
+    confirmTag = null
   }
 
   // Иконки для типов изменений
@@ -70,32 +109,39 @@
     быстрее: 'var(--thought-warning)',
   }
 
-  function isCurrent(tag: string) {
-    return tag.replace(/^v/, '') === currentVersion
-  }
-
+  // (+N) для релиза = пользовательские строки в коммитах новее текущей версии
   function countNew(rel: ReleaseChangelog): number {
-    if (baselineCounter === null) return 0
-    return rel.commits.reduce((s, c) => c.counter > baselineCounter! ? s + c.lines.length : s, 0)
+    return rel.commits.reduce((s, c) => c.counter > currentCounter ? s + c.lines.length : s, 0)
   }
 
-  // Строки выбранного релиза — пересчитываем только при смене selected/baseline
+  // Строки выбранного релиза — пересчитываем только при смене selected/currentCounter
   const selectedLines = $derived(
     selected
       ? selected.commits.flatMap(commit =>
           commit.lines.map(line => ({
             ...line,
             counter: commit.counter,
-            isNew: baselineCounter !== null && commit.counter > baselineCounter,
+            isNew: commit.counter > currentCounter,
           }))
         )
       : []
   )
 
-  // (+N) для каждого релиза в списке — пересчитывается при смене releases/baseline
+  // (+N) для каждого релиза в списке — пересчитывается при смене releases/currentCounter
   const releasesWithNew = $derived(
-    filteredReleases.map(rel => ({ rel, newCount: countNew(rel) }))
+    filteredReleases.map(rel => ({ rel, newCount: countNew(rel), kind: relKind(rel.tag) }))
   )
+
+  // Подпись прогресса скачивания
+  const progressLabel = $derived.by(() => {
+    if (!progress) return ''
+    if (progress.done) return 'запускаю установщик…'
+    if (progress.pct !== null) {
+      const size = progress.total ? ` · ${formatBytes(progress.downloaded)} / ${formatBytes(progress.total)}` : ''
+      return `${progress.pct}%${size}`
+    }
+    return `скачано ${formatBytes(progress.downloaded)}`
+  })
 </script>
 
 <div class="page">
@@ -111,7 +157,8 @@
         <div class="detail-tag-row">
           <span class="tag">v{displayVersion(selected.tag.replace(/^v/, ''))}</span>
           {#if selected.prerelease}<span class="badge beta">beta</span>{/if}
-          {#if isCurrent(selected.tag)}<span class="badge current">установлена</span>{/if}
+          {#if relKind(selected.tag) === 'current'}<span class="badge current">установлена</span>{/if}
+          {#if relKind(selected.tag) === 'older'}<span class="badge old">старее</span>{/if}
           {#if selectedLines.filter(l => l.isNew).length > 0}<span class="badge new">+{selectedLines.filter(l => l.isNew).length} новых</span>{/if}
         </div>
         <h1 class="detail-title">{selected.name}</h1>
@@ -153,13 +200,20 @@
     {:else if releases.length === 0}
       <div class="error">Релизов пока нет</div>
     {:else}
+      {#if installError}
+        <div class="install-error" role="alert">
+          <span>{installError}</span>
+          <button class="install-error-close" onclick={() => installError = ''} aria-label="Скрыть">✕</button>
+        </div>
+      {/if}
       <div class="grid">
-        {#each releasesWithNew as { rel, newCount }}
-          <div class="card" class:card-current={isCurrent(rel.tag)} onclick={() => selected = rel} role="button" tabindex="0" onkeydown={(e) => e.key === 'Enter' && (selected = rel)}>
+        {#each releasesWithNew as { rel, newCount, kind }}
+          <div class="card" class:card-current={kind === 'current'} onclick={() => selected = rel} role="button" tabindex="0" onkeydown={(e) => e.key === 'Enter' && (selected = rel)}>
             <div class="card-top">
               <span class="card-tag">v{displayVersion(rel.tag.replace(/^v/, ''))}</span>
               {#if rel.prerelease}<span class="badge beta">beta</span>{/if}
-              {#if isCurrent(rel.tag)}<span class="badge current">✓</span>{/if}
+              {#if kind === 'current'}<span class="badge current">✓</span>{/if}
+              {#if kind === 'older'}<span class="badge old">старее</span>{/if}
               {#if newCount > 0}<span class="badge new">+{newCount}</span>{/if}
             </div>
             <p class="card-date">{formatDate(rel.publishedAt)}</p>
@@ -168,14 +222,33 @@
             {:else}
               <p class="card-stat">технические улучшения</p>
             {/if}
-            {#if !isCurrent(rel.tag)}
-              <button
-                class="install-btn"
-                class:installing={installing === rel.tag}
-                onclick={(e) => installRelease(rel.tag, e)}
-              >
-                {installing === rel.tag ? 'скачиваю...' : 'установить'}
-              </button>
+
+            {#if kind !== 'current'}
+              {#if installing === rel.tag}
+                <!-- Прогресс скачивания -->
+                <div class="dl" onclick={(e) => e.stopPropagation()} role="presentation">
+                  <div class="dl-track"><div class="dl-fill" style="width:{progress?.pct ?? 5}%" class:indet={progress?.pct == null}></div></div>
+                  <span class="dl-label">{progressLabel}</span>
+                </div>
+              {:else if confirmTag === rel.tag}
+                <!-- Подтверждение -->
+                <div class="confirm" onclick={(e) => e.stopPropagation()} role="presentation">
+                  <span class="confirm-q">{kind === 'older' ? 'Откатиться на эту версию?' : 'Установить эту версию?'}</span>
+                  <div class="confirm-actions">
+                    <button class="confirm-yes" onclick={() => confirmInstall(rel.tag)}>да, {actionLabel(rel.tag)}</button>
+                    <button class="confirm-no" onclick={cancelConfirm}>отмена</button>
+                  </div>
+                </div>
+              {:else}
+                <button
+                  class="install-btn"
+                  class:rollback={kind === 'older'}
+                  disabled={installing !== null}
+                  onclick={(e) => { e.stopPropagation(); startInstall(rel.tag) }}
+                >
+                  {actionLabel(rel.tag)}
+                </button>
+              {/if}
             {/if}
           </div>
         {/each}
@@ -265,6 +338,7 @@
   .badge.current { background: rgba(229,61,70,0.15); color: var(--accent); }
   .badge.new { background: rgba(34,197,94,0.12); color: var(--thought-success); }
   .badge.beta { background: rgba(99,102,241,0.15); color: var(--status-downloading); }
+  .badge.old { background: rgba(255,255,255,0.06); color: var(--text-muted); }
 
   .install-btn {
     margin-top: 10px;
@@ -280,15 +354,49 @@
     cursor: pointer;
     transition: background 0.15s, color 0.15s, border-color 0.15s;
   }
-  .install-btn:hover {
+  .install-btn:hover:not(:disabled) {
     background: var(--bg-overlay);
     color: var(--text-primary);
     border-color: var(--border-default);
   }
-  .install-btn.installing {
-    color: var(--thought-info);
-    border-color: rgba(0,229,255,0.3);
-    cursor: default;
+  .install-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .install-btn.rollback { color: var(--text-muted); }
+  .install-btn.rollback:hover:not(:disabled) { color: var(--text-secondary); }
+
+  /* Подтверждение установки */
+  .confirm {
+    margin-top: 10px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .confirm-q { font-size: 11px; color: var(--text-secondary); }
+  .confirm-actions { display: flex; gap: 6px; }
+  .confirm-yes, .confirm-no {
+    flex: 1; padding: 5px 0; border-radius: 6px; font-size: 11px; font-weight: 600;
+    cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+  .confirm-yes {
+    border: 1px solid rgba(229,61,70,0.4); background: rgba(229,61,70,0.12); color: var(--accent);
+  }
+  .confirm-yes:hover { background: rgba(229,61,70,0.2); }
+  .confirm-no {
+    border: 1px solid var(--border-subtle); background: transparent; color: var(--text-muted);
+  }
+  .confirm-no:hover { color: var(--text-secondary); border-color: var(--border-default); }
+
+  /* Прогресс скачивания */
+  .dl { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .dl-track {
+    height: 4px; border-radius: 2px; background: var(--bg-overlay); overflow: hidden;
+  }
+  .dl-fill {
+    height: 100%; border-radius: 2px;
+    background: var(--thought-info);
+    transition: width 0.25s ease;
+  }
+  .dl-fill.indet { animation: indet 1s ease-in-out infinite; }
+  @keyframes indet { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
+  .dl-label {
+    font-size: 10px; color: var(--thought-info); font-variant-numeric: tabular-nums;
   }
 
   /* Детальная страница */
@@ -359,4 +467,19 @@
   .error {
     padding: 48px 0; color: var(--text-muted); font-size: 13px;
   }
+
+  .install-error {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    margin-bottom: 16px; padding: 10px 14px;
+    background: rgba(229,61,70,0.1);
+    border: 1px solid rgba(229,61,70,0.3);
+    border-radius: 10px;
+    color: var(--accent); font-size: 12px;
+  }
+  .install-error-close {
+    flex-shrink: 0;
+    background: none; border: none; color: var(--accent); cursor: pointer;
+    font-size: 12px; padding: 0 2px; opacity: 0.7; transition: opacity 0.15s;
+  }
+  .install-error-close:hover { opacity: 1; }
 </style>

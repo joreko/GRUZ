@@ -20,3 +20,14 @@ export interface OrchestratorThought {
 export function onOrchestratorThought(cb: (t: OrchestratorThought) => void) {
   return listen<OrchestratorThought>('orchestrator:thought', (e) => cb(e.payload))
 }
+
+export interface UpdateProgress {
+  downloaded: number
+  total: number | null
+  pct: number | null
+  done: boolean
+}
+
+export function onUpdateProgress(cb: (p: UpdateProgress) => void) {
+  return listen<UpdateProgress>('update:progress', (e) => cb(e.payload))
+}

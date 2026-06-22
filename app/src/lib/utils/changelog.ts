@@ -27,17 +27,34 @@ export interface ReleaseChangelog {
   latestCounter: number   // максимальный счётчик в релизе (включая технические коммиты)
 }
 
-// Версия в tauri.conf.json: "0.0.104" — patch это счётчик.
-// В UI показываем только major.minor: "v0.0"
-// При минор-релизе: "0.1.0" → "v0.1"
+// Версия в tauri.conf.json: "0.0.104" — patch это счётчик коммита.
+// Показываем версию полностью: "0.0.104". patch несёт смысл (номер сборки),
+// обрезать его нельзя — иначе все релизы выглядят одинаково ("v0.0").
 export function displayVersion(full: string): string {
-  const [major, minor] = full.split('.')
-  return `${major}.${minor}`
+  return full
+}
+
+// patch-компонент версии = счётчик коммита. "0.0.130" → 130
+export function versionCounter(full: string): number {
+  const parts = full.split('.')
+  return parseInt(parts[parts.length - 1], 10) || 0
+}
+
+// Сравнение semver-версий. >0 если a новее b, <0 если старее, 0 если равны.
+export function compareVersions(a: string, b: string): number {
+  const pa = a.split('.').map(n => parseInt(n, 10) || 0)
+  const pb = b.split('.').map(n => parseInt(n, 10) || 0)
+  const len = Math.max(pa.length, pb.length)
+  for (let i = 0; i < len; i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0)
+    if (diff !== 0) return diff
+  }
+  return 0
 }
 
 // Парсим сообщение коммита. Возвращает counter + пользовательские строки.
 // counter берётся из заголовка даже если пользовательских строк нет —
-// это важно для точного baseline.
+// это важно для точного сравнения версий по счётчику.
 function parseCommitMessage(message: string): { counter: number; lines: CommitLine[] } | null {
   const lines = message.trim().split('\n').map(l => l.trim()).filter(Boolean)
   if (lines.length === 0) return null
@@ -89,8 +106,32 @@ async function fetchCommitsUpTo(tag: string): Promise<GithubCommit[]> {
   return r.json()
 }
 
-// Основная функция — загружает полный changelog по релизам параллельно
+// Кэш changelog — GitHub API без авторизации даёт лишь 60 запросов/час,
+// а каждый fetchChangelog тратит ~1+N. TitleBar и UpdatesPage зовут его
+// независимо, плюс повторные заходы — без кэша лимит быстро исчерпывается.
+const CACHE_TTL_MS = 5 * 60 * 1000
+let memoryCache: { at: number; data: ReleaseChangelog[] } | null = null
+let inflight: Promise<ReleaseChangelog[]> | null = null
+
+// Основная функция — загружает полный changelog по релизам параллельно.
+// Результат кэшируется на 5 минут; параллельные вызовы дедуплицируются.
 export async function fetchChangelog(): Promise<ReleaseChangelog[]> {
+  if (memoryCache && Date.now() - memoryCache.at < CACHE_TTL_MS) {
+    return memoryCache.data
+  }
+  if (inflight) return inflight
+
+  inflight = fetchChangelogUncached()
+    .then(data => {
+      memoryCache = { at: Date.now(), data }
+      return data
+    })
+    .finally(() => { inflight = null })
+
+  return inflight
+}
+
+async function fetchChangelogUncached(): Promise<ReleaseChangelog[]> {
   const releases = await fetchReleases()
   if (releases.length === 0) return []
 
@@ -134,12 +175,14 @@ export async function fetchChangelog(): Promise<ReleaseChangelog[]> {
   })
 }
 
-// Считает (+N) — пользовательских изменений после baseline-счётчика
-export function countNewChanges(changelogs: ReleaseChangelog[], baselineCounter: number): number {
+// Считает (+N) — пользовательских изменений в релизах НОВЕЕ установленной версии.
+// currentCounter = patch текущего бинарника (= счётчик коммита).
+// Старые релизы (counter <= current) не считаются — это не «доступные обновления».
+export function countNewChanges(changelogs: ReleaseChangelog[], currentCounter: number): number {
   let total = 0
   for (const rel of changelogs) {
     for (const commit of rel.commits) {
-      if (commit.counter > baselineCounter) total += commit.lines.length
+      if (commit.counter > currentCounter) total += commit.lines.length
     }
   }
   return total
@@ -148,16 +191,4 @@ export function countNewChanges(changelogs: ReleaseChangelog[], baselineCounter:
 // Максимальный счётчик по всем коммитам (включая технические)
 export function getLatestCounter(changelogs: ReleaseChangelog[]): number {
   return changelogs.reduce((max, rel) => Math.max(max, rel.latestCounter), 0)
-}
-
-// Baseline-счётчик — номер последнего известного коммита на момент установки
-const BASELINE_KEY = 'gruz_baseline_counter'
-
-export function getBaselineCounter(): number | null {
-  const v = localStorage.getItem(BASELINE_KEY)
-  return v !== null ? parseInt(v, 10) : null
-}
-
-export function setBaselineCounter(counter: number): void {
-  localStorage.setItem(BASELINE_KEY, String(counter))
 }

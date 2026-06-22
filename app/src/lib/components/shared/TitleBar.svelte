@@ -8,8 +8,7 @@
   import {
     fetchChangelog,
     countNewChanges,
-    getBaselineCounter,
-    setBaselineCounter,
+    versionCounter,
     displayVersion,
   } from '$lib/utils/changelog'
 
@@ -117,15 +116,10 @@
     // Загрузка changelog в фоне
     const changelogs = await fetchChangelog().catch(() => null)
     if (changelogs) {
-      let baseline = getBaselineCounter()
-      if (baseline === null) {
-        // Первый запуск — baseline = счётчик текущей версии бинарника
-        // version = "0.0.117" → patch = 117 = счётчик коммита
-        const parts = version.split('.')
-        baseline = parseInt(parts[parts.length - 1], 10) || 0
-        setBaselineCounter(baseline)
-      }
-      newChangesCount = countNewChanges(changelogs, baseline)
+      // (+N) считаем относительно установленной версии: patch = счётчик коммита.
+      // Так старые релизы никогда не попадают в счётчик «новых изменений».
+      const currentCounter = versionCounter(version)
+      newChangesCount = countNewChanges(changelogs, currentCounter)
     }
 
     registerThoughtCallback(enqueue)
