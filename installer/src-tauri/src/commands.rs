@@ -667,10 +667,10 @@ async fn do_install(app: &AppHandle, opts: InstallOptions) -> anyhow::Result<()>
 /// Записывает все файлы в staging-директорию
 async fn do_install_to_staging(
     staging: &PathBuf,
-    install_dir: &PathBuf,
+    _install_dir: &PathBuf,
     app: &AppHandle,
     _opts: &InstallOptions,
-    desktop_shortcut: bool,
+    _desktop_shortcut: bool,
 ) -> anyhow::Result<()> {
     emit(app, Progress { step: "Копирую Груз…".into(), pct: 15, done: false, error: None });
     write_and_verify(GRUZ_EXE, &staging.join("gruz.exe"))?;
