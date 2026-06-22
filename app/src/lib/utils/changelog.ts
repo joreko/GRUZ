@@ -26,12 +26,9 @@ export interface ReleaseChangelog {
   latestCounter: number   // максимальный счётчик в релизе (включая технические коммиты)
 }
 
-// Версия в tauri.conf.json: "0.0.104" — patch это счётчик.
-// В UI показываем только major.minor: "v0.0"
-// При минор-релизе: "0.1.0" → "v0.1"
+// Версия в tauri.conf.json: "0.0.110" — показываем как есть с префиксом v
 export function displayVersion(full: string): string {
-  const [major, minor] = full.split('.')
-  return `${major}.${minor}`
+  return full
 }
 
 // Парсим сообщение коммита. Возвращает counter + пользовательские строки.
