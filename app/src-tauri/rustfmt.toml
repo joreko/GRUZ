@@ -1,0 +1,8 @@
+[version]
+edition = "2021"
+
+[style]
+max_width = 100
+tab_spaces = 4
+imports_granularity = "Crate"
+group_imports = "StdExternalCrate"
