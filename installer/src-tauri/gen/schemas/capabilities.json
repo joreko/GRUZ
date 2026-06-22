@@ -1,0 +1,1 @@
+{"dev.gruz.installer":{"identifier":"dev.gruz.installer","description":"","local":true,"windows":["main"],"permissions":["core:default","core:window:allow-close","core:window:allow-start-dragging","dialog:allow-open"]}}

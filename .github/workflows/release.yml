@@ -1,0 +1,169 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            app/src-tauri
+            installer/src-tauri
+
+      - name: Install frontend deps
+        shell: pwsh
+        run: |
+          npm ci --prefix app
+          npm ci --prefix installer
+
+      - name: Download yt-dlp and ffmpeg
+        working-directory: app
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -OutFile "yt-dlp.exe"
+          Invoke-WebRequest -Uri "https://github.com/GyanD/codexffmpeg/releases/download/8.1.1/ffmpeg-8.1.1-essentials_build.zip" -OutFile "ffmpeg.zip"
+          Expand-Archive -Path "ffmpeg.zip" -DestinationPath "ffmpeg-tmp"
+          Copy-Item (Get-ChildItem "ffmpeg-tmp" -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1).FullName "ffmpeg.exe"
+          Remove-Item "ffmpeg.zip","ffmpeg-tmp" -Recurse -Force
+
+      - name: Generate changelog
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $userTypes = @('добавлено', 'исправлено', 'улучшено', 'быстрее')
+          $lines = @()
+
+          # Предыдущий тег — второй в списке по убыванию версии
+          $tags = git tag --sort=-version:refname 2>$null
+          $prev = ($tags -split "`n" | Where-Object { $_ -and $_ -ne "${{ github.ref_name }}" } | Select-Object -First 1)
+
+          if ($prev) {
+            $raw = git log "$prev..${{ github.ref_name }}" --pretty=format:"%b%x00" --no-merges
+            foreach ($msg in ($raw -split "`0")) {
+              foreach ($line in ($msg -split "`n")) {
+                $line = $line.Trim()
+                if (-not $line) { continue }
+                if ($line -match '^(\S+?)(?:\([^)]+\))?:\s+(.+)$') {
+                  if ($userTypes -contains $Matches[1]) { $lines += "— " + $Matches[2] }
+                }
+              }
+            }
+          }
+
+          $changelog = if ($lines.Count -gt 0) { $lines -join "`n" } else { "" }
+          $d = "EOF_CL"
+          Add-Content $env:GITHUB_ENV "GRUZ_CHANGELOG<<$d"
+          if ($changelog) { Add-Content $env:GITHUB_ENV $changelog }
+          Add-Content $env:GITHUB_ENV $d
+          # Сохраняем для body релиза
+          $body = if ($changelog) { $changelog } else { "Технические улучшения и исправления." }
+          $d2 = "EOF_BODY"
+          Add-Content $env:GITHUB_ENV "RELEASE_BODY<<$d2"
+          Add-Content $env:GITHUB_ENV $body
+          Add-Content $env:GITHUB_ENV $d2
+
+      - name: Build main app
+        shell: pwsh
+        run: |
+          # Тег v0.0.104 — вписываем версию 0.0.104 в tauri.conf.json
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          $conf = Get-Content app/src-tauri/tauri.conf.json | ConvertFrom-Json
+          $conf.version = $version
+          $conf | ConvertTo-Json -Depth 10 | Set-Content app/src-tauri/tauri.conf.json
+        working-directory: .
+      - name: Build main app (cargo)
+        working-directory: app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+        run: npx tauri build
+
+      - name: Prepare installer payload
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')  # "0.0.104"
+
+          New-Item -ItemType Directory -Force -Path installer/src-tauri/payload | Out-Null
+
+          # Основные бинарники
+          Copy-Item app/src-tauri/target/release/gruz.exe      installer/src-tauri/payload/gruz.exe
+          Copy-Item app/yt-dlp.exe                              installer/src-tauri/payload/yt-dlp.exe
+          Copy-Item app/ffmpeg.exe                              installer/src-tauri/payload/ffmpeg.exe
+          Copy-Item app/src-tauri/icons/icon.ico                installer/src-tauri/payload/gruz.ico
+
+          # Версия в tauri.conf.json установщика
+          $conf = Get-Content installer/src-tauri/tauri.conf.json | ConvertFrom-Json
+          $conf.version = $version
+          $conf | ConvertTo-Json -Depth 10 | Set-Content installer/src-tauri/tauri.conf.json
+
+      - name: Build portable ZIP
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')  # "0.0.104"
+          $readme = "ГРУЗ $version — Portable`n========================`nЗапусти gruz.exe — yt-dlp и ffmpeg уже рядом.`nНикакой установки не требуется.`n`nGitHub: https://github.com/${{ github.repository }}"
+          $readme | Out-File -FilePath "README.txt" -Encoding UTF8
+          Compress-Archive -Path @(
+            "app/src-tauri/target/release/gruz.exe",
+            "app/yt-dlp.exe",
+            "app/ffmpeg.exe",
+            "README.txt"
+          ) -DestinationPath "GRUZ_${version}_portable.zip" -Force
+          Remove-Item README.txt
+
+      - name: Build installer
+        working-directory: installer
+        env:
+          GRUZ_CHANGELOG: ${{ env.GRUZ_CHANGELOG }}
+        run: npx tauri build
+
+      - name: Prepare release artifacts
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+
+          $exe = "installer/src-tauri/target/release/gruz-installer.exe"
+          Copy-Item $exe "GRUZ_${version}_Setup.exe"
+
+          # latest.json для updater — Tauri v2 создаёт .sig рядом с NSIS .exe
+          $sigFile = Get-ChildItem "app/src-tauri/target/release/bundle/nsis/" -Recurse -Filter "*.sig" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $sigFile) { $sigFile = Get-ChildItem "app/src-tauri/target/release/bundle/" -Recurse -Filter "*.sig" -ErrorAction SilentlyContinue | Select-Object -First 1 }
+          if (-not $sigFile) { Write-Error "No .sig file found"; exit 1 }
+          $tag = "${{ github.ref_name }}"
+          $url = "https://github.com/${{ github.repository }}/releases/download/$tag/GRUZ_${version}_Setup.exe"
+          @{
+            version  = $version
+            notes    = "ГРУЗ $version"
+            pub_date = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+            platforms = @{
+              "windows-x86_64" = @{
+                url       = $url
+                signature = (Get-Content $sigFile.FullName -Raw).Trim()
+              }
+            }
+          } | ConvertTo-Json -Depth 5 | Out-File -FilePath latest.json -Encoding UTF8
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ env.RELEASE_BODY }}
+          files: |
+            GRUZ_*_Setup.exe
+            GRUZ_*_portable.zip
+            latest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
