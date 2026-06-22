@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Gruz",
+  "productName": "Груз",
   "version": "0.0.1",
   "identifier": "dev.gruz.app",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Gruz",
+        "title": "Груз",
         "width": 1200,
         "height": 890,
         "minWidth": 900,
