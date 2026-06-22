@@ -1,0 +1,7 @@
+[workspace]
+members = ["src-tauri"]
+
+# Запрет clippy lint-ов уровня проекта
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"

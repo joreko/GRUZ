@@ -1,0 +1,94 @@
+/* CSS custom properties из tokens.ts — применяются глобально */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  /* Фон */
+  --bg-content:  #111111;
+  --bg-base:     #0f0f0f;
+  --bg-surface:  #161616;
+  --bg-elevated: #1e1e1e;
+  --bg-overlay:  #252525;
+
+  /* Граница */
+  --border-subtle:  #2a2a2a;
+  --border-default: #3a3a3a;
+  --border-strong:  #4a4a4a;
+
+  /* Текст */
+  --text-primary:   #f0f0f0;
+  --text-secondary: #a0a0a0;
+  --text-muted:     #606060;
+  --text-inverse:   #0f0f0f;
+
+  /* Акцент */
+  --accent:        #e63946;
+  --accent-hover:  #ff4d5a;
+  --accent-active: #cc2f3b;
+  --accent-subtle: #e6394620;
+  --accent-warm:   #ff6b3d;
+
+  /* Статусы */
+  --status-success:     #22c55e;
+  --status-warning:     #f59e0b;
+  --status-error:       #ef4444;
+  --status-info:        #3b82f6;
+  --status-downloading: #6366f1;
+
+  /* Цвета мыслей оркестратора — неоновая палитра */
+  --thought-muted:   #a1a1aa;
+  --thought-success: #39ff6e;
+  --thought-error:   #ff3333;
+  --thought-warning: #ffdd00;
+  --thought-info:    #00e5ff;
+  --thought-pink:    #ff80cc;
+  --thought-dash:    #3f3f46;
+
+  /* Отступы */
+  --space-1: 4px;  --space-2: 8px;   --space-3: 12px;
+  --space-4: 16px; --space-5: 20px;  --space-6: 24px;
+  --space-8: 32px; --space-10: 40px; --space-12: 48px;
+
+  /* Радиусы */
+  --radius-sm: 4px;  --radius-md: 8px;
+  --radius-lg: 12px; --radius-xl: 16px; --radius-full: 9999px;
+
+  /* Типографика */
+  --font-sans: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --text-xs: 11px; --text-sm: 13px; --text-md: 15px;
+  --text-lg: 17px; --text-xl: 20px; --text-2xl: 24px;
+
+  /* Переходы */
+  --transition-fast:    120ms ease;
+  --transition-default: 200ms ease;
+  --transition-slow:    300ms ease;
+
+  /* Layout */
+  --sidebar-width: 220px;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0;
+  height: 100%;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  /* Декоративные градиенты для миниатюр */
+  --thumb-g1: linear-gradient(135deg,#3b82f6,#60a5fa);
+  --thumb-g2: linear-gradient(135deg,#6366f1,#8b5cf6);
+  --thumb-g3: linear-gradient(135deg,#06b6d4,#3b82f6);
+  --thumb-g4: linear-gradient(135deg,#10b981,#14b8a6);
+}
+
+#app { height: 100%; display: flex; flex-direction: column; }
+
+/* Кастомный скроллбар */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: var(--radius-full); }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }

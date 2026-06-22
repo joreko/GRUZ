@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Груз",
+  "version": "0.0.1",
+  "identifier": "dev.gruz.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Груз",
+        "width": 1200,
+        "height": 890,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    },
+    "trayIcon": {
+      "iconPath": "icons/icon.png"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": true,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../yt-dlp.exe": "yt-dlp.exe",
+      "../ffmpeg.exe": "ffmpeg.exe"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU1RkE0MzQ4MkUyQzJCOEIKUldTTEt5d3VTRVA2NVFvSUxneFRhYVJtU1ZvWExkWkZhbHRXSHRFUzhuSkZ6dU9VMGpWdmkvREgK",
+      "endpoints": [
+        "https://github.com/joreko/GRUZ/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}
