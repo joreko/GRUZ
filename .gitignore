@@ -1,0 +1,78 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Lock files (committed per-package)
+# package-lock.json tracked intentionally
+
+# Build outputs
+dist/
+**/dist/
+*.js.map
+*.msi
+
+# Rust build
+target/
+**/*.node
+
+# Electron packaging
+release/
+**/release/
+
+# Binaries (fetched at build time)
+**/yt-dlp.exe
+**/yt-dlp
+**/ffmpeg.exe
+**/ffmpeg
+
+# Downloaded media files
+app/src-tauri/*.mp4
+app/src-tauri/*.webm
+app/src-tauri/*.mkv
+app/src-tauri/*.mov
+app/src-tauri/*.mp3
+app/src-tauri/*.part
+
+# Downloads (user data)
+downloads/
+**/downloads/
+
+# Env / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temp
+tmp/
+temp/
+
+# Installer payload (собирается в CI)
+installer/src-tauri/payload/
+installer/node_modules/
+installer/dist/
+installer/src-tauri/target/release/versions/
+bat/
+opencode.json
+.opencode/
+AGENTS.md
+docs/
+specs/
+
+# �����-������
+200.mp4
+
+app/public/bg.mp4
