@@ -1,7 +1,7 @@
 ﻿<script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window'
   import { getVersion } from '@tauri-apps/api/app'
-  import { check } from '@tauri-apps/plugin-updater'
+
   import { onMount, onDestroy } from 'svelte'
   import { onOrchestratorThought, type OrchestratorThought } from '$lib/bridge/events'
   import { registerThoughtCallback } from '$lib/stores/thought.svelte'
@@ -10,7 +10,6 @@
     countNewChanges,
     getBaselineCounter,
     setBaselineCounter,
-    getLatestCounter,
     displayVersion,
   } from '$lib/utils/changelog'
 
@@ -21,33 +20,10 @@
   const win = getCurrentWindow()
   let maximized = $state(false)
   let version = $state('')
-  let updateAvailable = $state(false)
-  let updateVersion = $state('')
   let newChangesCount = $state(0)  // (+N) — изменений с момента установки
-  let downloading = $state(false)
-  let downloadProgress = $state(0)
-  let downloaded = $state(false)
-  let progressDone = $state(false) // линия зелёная, fade out
 
   function handleUpdateClick() {
-    if (downloaded) { /* TODO: relaunch */ return }
-    if (downloading) return
-    if (!updateAvailable) {
-      route = 'updates'
-      return
-    }
-    downloading = true
-    downloadProgress = 0
-    progressDone = false
-    const interval = setInterval(() => {
-      downloadProgress += 2
-      if (downloadProgress >= 100) {
-        clearInterval(interval)
-        downloadProgress = 100
-        progressDone = true                          // линия → зелёная
-        setTimeout(() => { downloaded = true; downloading = false }, 500)
-      }
-    }, 30)
+    route = 'updates'
   }
 
   let unlistenResize: (() => void) | null = null
@@ -138,27 +114,18 @@
     })
     version = await getVersion()
 
-    // Тихая проверка обновлений + загрузка changelog в фоне
-    const [update, changelogs] = await Promise.allSettled([
-      check(),
-      fetchChangelog(),
-    ])
-
-    if (update.status === 'fulfilled' && update.value?.available) {
-      updateAvailable = true
-      updateVersion = update.value.version
-    }
-
-    if (changelogs.status === 'fulfilled') {
-      const logs = changelogs.value
-      const latest = getLatestCounter(logs)
+    // Загрузка changelog в фоне
+    const changelogs = await fetchChangelog().catch(() => null)
+    if (changelogs) {
       let baseline = getBaselineCounter()
       if (baseline === null) {
-        // Первый запуск — запоминаем текущий счётчик как baseline
-        baseline = latest
+        // Первый запуск — baseline = счётчик текущей версии бинарника
+        // version = "0.0.117" → patch = 117 = счётчик коммита
+        const parts = version.split('.')
+        baseline = parseInt(parts[parts.length - 1], 10) || 0
         setBaselineCounter(baseline)
       }
-      newChangesCount = countNewChanges(logs, baseline)
+      newChangesCount = countNewChanges(changelogs, baseline)
     }
 
     registerThoughtCallback(enqueue)
@@ -179,18 +146,10 @@
 <header class="titlebar" data-tauri-drag-region>
   <button
     class="version-btn"
-    class:has-update={updateAvailable}
-    class:is-downloading={downloading}
-    class:is-downloaded={downloaded}
-    class:active={updateAvailable || downloading || downloaded}
-    class:clickable={!updateAvailable && !downloading && !downloaded}
+    class:has-changes={newChangesCount > 0}
     onclick={handleUpdateClick}
   >
-    {#if downloading}
-      <div class="progress-bar" class:done={progressDone} style="width:{downloadProgress}%"></div>
-    {:else}
-      <span class="version-text">{downloaded ? 'перезапустить' : updateAvailable ? `v${displayVersion(updateVersion)} доступна` : newChangesCount > 0 ? `v${displayVersion(version)} (+${newChangesCount})` : `v${displayVersion(version)}`}</span>
-    {/if}
+    <span class="version-text">{newChangesCount > 0 ? `v${displayVersion(version)} (+${newChangesCount})` : `v${displayVersion(version)}`}</span>
   </button>
   <div class="middle-bar" data-tauri-drag-region>
     <span class="dash" style="color:{displayColor}">——</span>
@@ -277,10 +236,8 @@
     position: relative;
     -webkit-app-region: no-drag;
   }
-  .version-btn:hover { height: 24px; background: rgba(255,255,255,0.10); }
+  .version-btn:hover { height: 24px; background: rgba(255,255,255,0.10); cursor: pointer; }
   .version-btn:active { background: rgba(255,255,255,0.03); transition: none; }
-  .version-btn.active { height: 24px; cursor: pointer; }
-  .version-btn.clickable:hover { cursor: pointer; }
   .version-text {
     font-size: 10px;
     font-weight: 600;
@@ -292,21 +249,9 @@
     user-select: none;
     white-space: nowrap;
   }
+  .version-btn.has-changes .version-text { color: var(--thought-info); }
   .version-btn:hover .version-text,
-  .version-btn.active .version-text { opacity: 1; }
-  .version-btn.has-update .version-text { color: var(--thought-info); }
-  .progress-bar.done { background: var(--thought-success); box-shadow: 0 0 8px var(--thought-success), 0 0 20px var(--thought-success); opacity: 0; }
-  .version-btn.is-downloaded .version-text { color: var(--thought-success); animation: fadeIn 0.4s ease both; }
-  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-  .progress-bar {
-    position: absolute;
-    left: 0; top: 0; bottom: 0;
-    background: var(--thought-info);
-    opacity: 0.6;
-    box-shadow: 0 0 8px var(--thought-info), 0 0 20px var(--thought-info);
-    transition: width 0.05s linear, background 0.3s, opacity 0.4s;
-    pointer-events: none;
-  }
+  .version-btn.has-changes .version-text { opacity: 1; }
 
   .controls {
     display: flex;

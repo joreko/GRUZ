@@ -21,6 +21,7 @@ export interface ReleaseChangelog {
   tag: string
   name: string
   publishedAt: string
+  prerelease: boolean
   commits: ParsedCommit[]
   totalUserLines: number  // сумма пользовательских строк — для (+N)
   latestCounter: number   // максимальный счётчик в релизе (включая технические коммиты)
@@ -59,6 +60,7 @@ interface GithubRelease {
   tag_name: string
   name: string
   published_at: string
+  prerelease: boolean
 }
 
 interface GithubCommit {
@@ -124,6 +126,7 @@ export async function fetchChangelog(): Promise<ReleaseChangelog[]> {
       tag: rel.tag_name,
       name: rel.name || rel.tag_name,
       publishedAt: rel.published_at,
+      prerelease: rel.prerelease,
       commits,
       totalUserLines: commits.reduce((s, c) => s + c.lines.length, 0),
       latestCounter,

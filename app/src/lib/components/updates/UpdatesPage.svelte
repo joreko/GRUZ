@@ -2,6 +2,7 @@
   import { getVersion } from '@tauri-apps/api/app'
   import { onMount } from 'svelte'
   import { formatDate } from '$lib/utils/format'
+  import { commands } from '$lib/bridge/commands'
   import {
     fetchChangelog,
     getBaselineCounter,
@@ -9,12 +10,25 @@
     type ReleaseChangelog,
   } from '$lib/utils/changelog'
 
+  const REPO = 'joreko/GRUZ'
+
   let releases = $state<ReleaseChangelog[]>([])
   let selected = $state<ReleaseChangelog | null>(null)
   let loading = $state(true)
   let error = $state('')
   let currentVersion = $state('')
   let baselineCounter = $state<number | null>(null)
+  let installing = $state<string | null>(null)  // tag который устанавливается
+  let showBeta = $state(false)
+
+  // По умолчанию бета если нет стабильных
+  $effect(() => {
+    if (!loading && releases.length > 0 && releases.every(r => r.prerelease)) showBeta = true
+  })
+
+  const filteredReleases = $derived(
+    releases.filter(r => showBeta ? r.prerelease : !r.prerelease)
+  )
 
   onMount(async () => {
     currentVersion = await getVersion()
@@ -27,6 +41,19 @@
       loading = false
     }
   })
+
+  async function installRelease(tag: string, e: MouseEvent) {
+    e.stopPropagation()
+    if (installing) return
+    const version = tag.replace(/^v/, '')
+    const url = `https://github.com/${REPO}/releases/download/${tag}/GRUZ_${version}_Setup.exe`
+    installing = tag
+    try {
+      await commands.installVersion(url)
+    } catch {
+      installing = null
+    }
+  }
 
   // Иконки для типов изменений
   const typeIcon: Record<string, string> = {
@@ -67,7 +94,7 @@
 
   // (+N) для каждого релиза в списке — пересчитывается при смене releases/baseline
   const releasesWithNew = $derived(
-    releases.map(rel => ({ rel, newCount: countNew(rel) }))
+    filteredReleases.map(rel => ({ rel, newCount: countNew(rel) }))
   )
 </script>
 
@@ -83,6 +110,7 @@
       <div class="detail-header">
         <div class="detail-tag-row">
           <span class="tag">v{displayVersion(selected.tag.replace(/^v/, ''))}</span>
+          {#if selected.prerelease}<span class="badge beta">beta</span>{/if}
           {#if isCurrent(selected.tag)}<span class="badge current">установлена</span>{/if}
           {#if selectedLines.filter(l => l.isNew).length > 0}<span class="badge new">+{selectedLines.filter(l => l.isNew).length} новых</span>{/if}
         </div>
@@ -107,7 +135,13 @@
 
   {:else}
     <!-- Список релизов -->
-    <h2>Обновления</h2>
+    <div class="top-row">
+      <h2>Обновления</h2>
+      <div class="tabs">
+        <button class="tab" class:active={!showBeta} onclick={() => showBeta = false}>Стабильные</button>
+        <button class="tab" class:active={showBeta} onclick={() => showBeta = true}>Бета</button>
+      </div>
+    </div>
 
     {#if loading}
       <div class="loading">
@@ -121,20 +155,29 @@
     {:else}
       <div class="grid">
         {#each releasesWithNew as { rel, newCount }}
-          <button class="card" class:card-current={isCurrent(rel.tag)} onclick={() => selected = rel}>
+          <div class="card" class:card-current={isCurrent(rel.tag)} onclick={() => selected = rel} role="button" tabindex="0" onkeydown={(e) => e.key === 'Enter' && (selected = rel)}>
             <div class="card-top">
               <span class="card-tag">v{displayVersion(rel.tag.replace(/^v/, ''))}</span>
+              {#if rel.prerelease}<span class="badge beta">beta</span>{/if}
               {#if isCurrent(rel.tag)}<span class="badge current">✓</span>{/if}
               {#if newCount > 0}<span class="badge new">+{newCount}</span>{/if}
             </div>
-            <p class="card-name">{rel.name}</p>
             <p class="card-date">{formatDate(rel.publishedAt)}</p>
             {#if rel.totalUserLines > 0}
               <p class="card-stat">{rel.totalUserLines} {rel.totalUserLines === 1 ? 'изменение' : rel.totalUserLines < 5 ? 'изменения' : 'изменений'}</p>
             {:else}
               <p class="card-stat">технические улучшения</p>
             {/if}
-          </button>
+            {#if !isCurrent(rel.tag)}
+              <button
+                class="install-btn"
+                class:installing={installing === rel.tag}
+                onclick={(e) => installRelease(rel.tag, e)}
+              >
+                {installing === rel.tag ? 'скачиваю...' : 'установить'}
+              </button>
+            {/if}
+          </div>
         {/each}
       </div>
     {/if}
@@ -147,8 +190,32 @@
     min-height: 100%;
   }
   h2 {
-    margin: 0 0 24px;
+    margin: 0;
     font-size: 20px; font-weight: 700; color: var(--text-primary);
+  }
+
+  .top-row {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 24px;
+  }
+
+  .tabs {
+    display: flex;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: 11px;
+    padding: 3px;
+  }
+  .tab {
+    height: 30px; padding: 0 14px;
+    background: transparent; border: none; border-radius: 8px;
+    color: var(--text-muted); font-size: 12px; font-weight: 500; cursor: pointer;
+    transition: background var(--transition-fast), color var(--transition-fast);
+  }
+  .tab:hover { color: var(--text-secondary); }
+  .tab.active {
+    background: rgba(0,0,0,0.35); color: var(--text-primary); font-weight: 600;
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.6), inset 0 -1px 1px rgba(255,255,255,0.03), inset 0 1px 0 rgba(120,120,120,0.5);
   }
 
   /* Сетка */
@@ -181,11 +248,6 @@
   .card-tag {
     font-size: 13px; font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums;
   }
-  .card-name {
-    margin: 0 0 4px;
-    font-size: 12px; font-weight: 500; color: var(--text-secondary);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
   .card-date {
     margin: 0 0 6px;
     font-size: 11px; color: var(--text-muted);
@@ -202,6 +264,32 @@
   }
   .badge.current { background: rgba(229,61,70,0.15); color: var(--accent); }
   .badge.new { background: rgba(34,197,94,0.12); color: var(--thought-success); }
+  .badge.beta { background: rgba(99,102,241,0.15); color: var(--status-downloading); }
+
+  .install-btn {
+    margin-top: 10px;
+    width: 100%;
+    padding: 5px 0;
+    border-radius: 6px;
+    border: 1px solid var(--border-subtle);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+  .install-btn:hover {
+    background: var(--bg-overlay);
+    color: var(--text-primary);
+    border-color: var(--border-default);
+  }
+  .install-btn.installing {
+    color: var(--thought-info);
+    border-color: rgba(0,229,255,0.3);
+    cursor: default;
+  }
 
   /* Детальная страница */
   .detail {

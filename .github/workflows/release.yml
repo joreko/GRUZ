@@ -135,27 +135,8 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart('v')
-
           $exe = "installer/src-tauri/target/release/gruz-installer.exe"
           Copy-Item $exe "GRUZ_${version}_Setup.exe"
-
-          # latest.json для updater — Tauri v2 создаёт .sig рядом с NSIS .exe
-          $sigFile = Get-ChildItem "app/src-tauri/target/release/bundle/nsis/" -Recurse -Filter "*.sig" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $sigFile) { $sigFile = Get-ChildItem "app/src-tauri/target/release/bundle/" -Recurse -Filter "*.sig" -ErrorAction SilentlyContinue | Select-Object -First 1 }
-          if (-not $sigFile) { Write-Error "No .sig file found"; exit 1 }
-          $tag = "${{ github.ref_name }}"
-          $url = "https://github.com/${{ github.repository }}/releases/download/$tag/GRUZ_${version}_Setup.exe"
-          @{
-            version  = $version
-            notes    = "ГРУЗ $version"
-            pub_date = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
-            platforms = @{
-              "windows-x86_64" = @{
-                url       = $url
-                signature = (Get-Content $sigFile.FullName -Raw).Trim()
-              }
-            }
-          } | ConvertTo-Json -Depth 5 | Out-File -FilePath latest.json -Encoding UTF8
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -164,6 +145,5 @@ jobs:
           files: |
             GRUZ_*_Setup.exe
             GRUZ_*_portable.zip
-            latest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

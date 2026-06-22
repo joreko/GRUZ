@@ -65,4 +65,11 @@ export const commands = {
 
   updateSession: (session: Session) =>
     invoke<void>('update_session', { session }),
+  // Обновление
+  installVersion: (url: string) =>
+    invoke<void>('install_version', { url }),
+
+  // Поддержка
+  uploadLog: () =>
+    invoke<string>('upload_log'),
 }

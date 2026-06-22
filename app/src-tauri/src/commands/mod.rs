@@ -4,3 +4,5 @@ pub mod history;
 pub mod queue;
 pub mod session;
 pub mod settings;
+pub mod support;
+pub mod update;

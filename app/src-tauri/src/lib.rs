@@ -6,7 +6,7 @@ mod orchestrator;
 mod queue;
 mod ytdlp;
 
-use commands::{channel_prefs as channel_prefs_cmds, download, history, queue as queue_cmds, session as session_cmds, settings};
+use commands::{channel_prefs as channel_prefs_cmds, download, history, queue as queue_cmds, session as session_cmds, settings, support as support_cmds, update as update_cmds};
 use orchestrator::{Orchestrator, OrchestratorHandle};
 use std::sync::Arc;
 use tauri::Manager;
@@ -80,7 +80,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
@@ -125,6 +124,8 @@ pub fn run() {
             channel_prefs_cmds::delete_channel_prefs,
             session_cmds::get_session,
             session_cmds::update_session,
+            update_cmds::install_version,
+            support_cmds::upload_log,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
