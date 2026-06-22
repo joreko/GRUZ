@@ -251,37 +251,44 @@ async fn check_webview2(app: &AppHandle) -> anyhow::Result<()> {
 // ─── Ярлыки через mslnk ────────────────────────────────────────────────────────
 
 fn create_shortcuts(install_dir: &PathBuf, desktop: bool) -> anyhow::Result<()> {
-    use mslnk::ShellLink;
-
     let exe = install_dir.join("gruz.exe");
+    anyhow::ensure!(exe.exists(), "gruz.exe не найден в {}", install_dir.display());
+
     let ico = install_dir.join("gruz.ico");
-    let ico_str = ico.to_string_lossy().into_owned();
+    let exe_str = escape(&exe.to_string_lossy());
+    let ico_str = escape(&ico.to_string_lossy());
 
     // Ярлык в меню Пуск
     let appdata = std::env::var("APPDATA")
         .map_err(|_| anyhow::anyhow!("%APPDATA% недоступен"))?;
     let start = PathBuf::from(&appdata)
         .join("Microsoft\\Windows\\Start Menu\\Programs\\Груз.lnk");
-
-    // Создаём директорию Programs если её нет
     if let Some(parent) = start.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    let start_str = escape(&start.to_string_lossy());
 
-    let mut lnk = ShellLink::new(&exe)?;
-    lnk.set_name(Some("Груз — загрузчик видео".into()));
-    lnk.set_icon_location(Some(ico_str.clone()));
-    lnk.create_lnk(&start)?;
+    run_ps(&format!(
+        "$s=(New-Object -COM WScript.Shell).CreateShortcut('{start_str}');\
+        $s.TargetPath='{exe_str}';\
+        $s.IconLocation='{ico_str},0';\
+        $s.Description='Груз — загрузчик видео';\
+        $s.Save()"
+    ))?;
 
-    // Ярлык на рабочем столе — только если запрошено
+    // Ярлык на рабочем столе
     if desktop {
         let userprofile = std::env::var("USERPROFILE")
             .map_err(|_| anyhow::anyhow!("%USERPROFILE% недоступен"))?;
         let desk = PathBuf::from(&userprofile).join("Desktop\\Груз.lnk");
-        let mut lnk2 = ShellLink::new(&exe)?;
-        lnk2.set_name(Some("Груз — загрузчик видео".into()));
-        lnk2.set_icon_location(Some(ico_str));
-        lnk2.create_lnk(&desk)?;
+        let desk_str = escape(&desk.to_string_lossy());
+        run_ps(&format!(
+            "$s=(New-Object -COM WScript.Shell).CreateShortcut('{desk_str}');\
+            $s.TargetPath='{exe_str}';\
+            $s.IconLocation='{ico_str},0';\
+            $s.Description='Груз — загрузчик видео';\
+            $s.Save()"
+        ))?;
     }
 
     Ok(())
