@@ -53,7 +53,7 @@ jobs:
           $prev = ($tags -split "`n" | Where-Object { $_ -and $_ -ne "${{ github.ref_name }}" } | Select-Object -First 1)
 
           if ($prev) {
-            $raw = git log "$prev..${{ github.ref_name }}" --pretty=format:"%b%x00" --no-merges
+            $raw = git log "$prev..${{ github.ref_name }}" --pretty=format:"%B%x00" --no-merges
             foreach ($msg in ($raw -split "`0")) {
               foreach ($line in ($msg -split "`n")) {
                 $line = $line.Trim()
@@ -80,7 +80,6 @@ jobs:
       - name: Build main app
         shell: pwsh
         run: |
-          # Тег v0.0.104 — вписываем версию 0.0.104 в tauri.conf.json
           $version = "${{ github.ref_name }}".TrimStart('v')
           $conf = Get-Content app/src-tauri/tauri.conf.json | ConvertFrom-Json
           $conf.version = $version
