@@ -631,6 +631,9 @@ async fn do_install(app: &AppHandle, opts: InstallOptions) -> anyhow::Result<()>
     }
 
     // ── Постустановочные шаги ─────────────────────────────────────────────────
+    emit(app, Progress { step: "Создаю ярлыки…".into(), pct: 88, done: false, error: None });
+    create_shortcuts(&dir, desktop_shortcut)?;
+
     emit(app, Progress { step: "Регистрирую в системе…".into(), pct: 90, done: false, error: None });
     write_registry(&dir)?;
 
@@ -685,9 +688,6 @@ async fn do_install_to_staging(
     // Копируем установщик как средство удаления — из текущего exe в staging
     let self_exe = std::env::current_exe()?;
     std::fs::copy(&self_exe, staging.join("gruz-setup.exe"))?;
-
-    // Ярлыки создаём сразу на финальный путь (они будут работать после rename)
-    create_shortcuts(install_dir, desktop_shortcut)?;
 
     Ok(())
 }
