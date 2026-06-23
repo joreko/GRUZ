@@ -196,7 +196,7 @@
   .fab {
     position: absolute;
     bottom: 20px;
-    right: 84px;
+    right: 14px;
     width: 36px;
     height: 36px;
     border-radius: 50%;
@@ -219,7 +219,7 @@
   .fab-menu {
     position: absolute;
     bottom: 64px;
-    right: 84px;
+    right: 14px;
     background: var(--bg-elevated);
     border: 1px solid var(--border-default);
     border-radius: 12px;

@@ -80,9 +80,10 @@ jobs:
       - name: Build main app
         shell: pwsh
         run: |
-          $version = "${{ github.ref_name }}".TrimStart('v')
+          # Тег беты: "v0.0.132-beta". Числовая версия для сборки — без суффикса.
+          $numeric = ("${{ github.ref_name }}".TrimStart('v') -replace '-.*$','')
           $conf = Get-Content app/src-tauri/tauri.conf.json | ConvertFrom-Json
-          $conf.version = $version
+          $conf.version = $numeric
           $conf | ConvertTo-Json -Depth 10 | Set-Content app/src-tauri/tauri.conf.json
         working-directory: .
       - name: Build main app (cargo)
@@ -95,7 +96,7 @@ jobs:
       - name: Prepare installer payload
         shell: pwsh
         run: |
-          $version = "${{ github.ref_name }}".TrimStart('v')  # "0.0.104"
+          $numeric = ("${{ github.ref_name }}".TrimStart('v') -replace '-.*$','')  # "0.0.132"
 
           New-Item -ItemType Directory -Force -Path installer/src-tauri/payload | Out-Null
 
@@ -107,21 +108,22 @@ jobs:
 
           # Версия в tauri.conf.json установщика
           $conf = Get-Content installer/src-tauri/tauri.conf.json | ConvertFrom-Json
-          $conf.version = $version
+          $conf.version = $numeric
           $conf | ConvertTo-Json -Depth 10 | Set-Content installer/src-tauri/tauri.conf.json
 
       - name: Build portable ZIP
         shell: pwsh
         run: |
-          $version = "${{ github.ref_name }}".TrimStart('v')  # "0.0.104"
-          $readme = "ГРУЗ $version — Portable`n========================`nЗапусти gruz.exe — yt-dlp и ffmpeg уже рядом.`nНикакой установки не требуется.`n`nGitHub: https://github.com/${{ github.repository }}"
+          # Имя ассета совпадает с тегом без 'v' (так UI строит ссылку на скачивание).
+          $asset = "${{ github.ref_name }}".TrimStart('v')  # "0.0.132" или "0.0.132-beta"
+          $readme = "ГРУЗ $asset — Portable`n========================`nЗапусти gruz.exe — yt-dlp и ffmpeg уже рядом.`nНикакой установки не требуется.`n`nGitHub: https://github.com/${{ github.repository }}"
           $readme | Out-File -FilePath "README.txt" -Encoding UTF8
           Compress-Archive -Path @(
             "app/src-tauri/target/release/gruz.exe",
             "app/yt-dlp.exe",
             "app/ffmpeg.exe",
             "README.txt"
-          ) -DestinationPath "GRUZ_${version}_portable.zip" -Force
+          ) -DestinationPath "GRUZ_${asset}_portable.zip" -Force
           Remove-Item README.txt
 
       - name: Build installer
@@ -133,14 +135,15 @@ jobs:
       - name: Prepare release artifacts
         shell: pwsh
         run: |
-          $version = "${{ github.ref_name }}".TrimStart('v')
+          $asset = "${{ github.ref_name }}".TrimStart('v')
           $exe = "installer/src-tauri/target/release/gruz-installer.exe"
-          Copy-Item $exe "GRUZ_${version}_Setup.exe"
+          Copy-Item $exe "GRUZ_${asset}_Setup.exe"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           body: ${{ env.RELEASE_BODY }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             GRUZ_*_Setup.exe
             GRUZ_*_portable.zip
