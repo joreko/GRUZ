@@ -1,6 +1,6 @@
 // Утилиты для работы с changelog через GitHub API
 
-const REPO = 'joreko/GRUZ'
+export const REPO = 'joreko/GRUZ'
 const API = `https://api.github.com/repos/${REPO}`
 
 // Пользовательские типы — показываются в changelog и считаются в (+N)
@@ -13,8 +13,9 @@ export interface CommitLine {
 }
 
 export interface ParsedCommit {
-  counter: number      // XXXX из заголовка
-  lines: CommitLine[]  // отфильтрованные пользовательские строки
+  counter: number        // XXXX из заголовка
+  lines: CommitLine[]    // пользовательские строки (добавлено/исправлено/улучшено/быстрее)
+  techLines: CommitLine[] // технические строки (рефакт/сборка/доки/тесты и прочие)
 }
 
 export interface ReleaseChangelog {
@@ -30,8 +31,9 @@ export interface ReleaseChangelog {
 // Версия в tauri.conf.json: "0.0.104" — patch это счётчик коммита.
 // Показываем версию полностью: "0.0.104". patch несёт смысл (номер сборки),
 // обрезать его нельзя — иначе все релизы выглядят одинаково ("v0.0").
+// Суффикс пре-релиза ("-beta") отбрасываем — о бете говорит отдельный бейдж.
 export function displayVersion(full: string): string {
-  return full
+  return full.replace(/-.*$/, '')
 }
 
 // patch-компонент версии = счётчик коммита. "0.0.130" → 130
@@ -42,8 +44,9 @@ export function versionCounter(full: string): number {
 
 // Сравнение semver-версий. >0 если a новее b, <0 если старее, 0 если равны.
 export function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map(n => parseInt(n, 10) || 0)
-  const pb = b.split('.').map(n => parseInt(n, 10) || 0)
+  const clean = (s: string) => s.replace(/-.*$/, '')
+  const pa = clean(a).split('.').map(n => parseInt(n, 10) || 0)
+  const pb = clean(b).split('.').map(n => parseInt(n, 10) || 0)
   const len = Math.max(pa.length, pb.length)
   for (let i = 0; i < len; i++) {
     const diff = (pa[i] ?? 0) - (pb[i] ?? 0)
@@ -55,7 +58,7 @@ export function compareVersions(a: string, b: string): number {
 // Парсим сообщение коммита. Возвращает counter + пользовательские строки.
 // counter берётся из заголовка даже если пользовательских строк нет —
 // это важно для точного сравнения версий по счётчику.
-function parseCommitMessage(message: string): { counter: number; lines: CommitLine[] } | null {
+function parseCommitMessage(message: string): { counter: number; lines: CommitLine[]; techLines: CommitLine[] } | null {
   const lines = message.trim().split('\n').map(l => l.trim()).filter(Boolean)
   if (lines.length === 0) return null
 
@@ -63,14 +66,16 @@ function parseCommitMessage(message: string): { counter: number; lines: CommitLi
   if (isNaN(counter)) return null
 
   const userLines: CommitLine[] = []
+  const techLines: CommitLine[] = []
   for (const line of lines.slice(1)) {
     const m = line.match(/^([а-яёА-ЯЁ]+)(?:\(([^)]+)\))?:\s*(.+)$/)
     if (!m) continue
     const [, type, scope = '', text] = m
     if (USER_TYPES.has(type)) userLines.push({ type, scope, text })
+    else techLines.push({ type, scope, text })
   }
 
-  return { counter, lines: userLines }
+  return { counter, lines: userLines, techLines }
 }
 
 interface GithubRelease {
@@ -86,24 +91,36 @@ interface GithubCommit {
 }
 
 async function fetchReleases(): Promise<GithubRelease[]> {
-  const r = await fetch(`${API}/releases?per_page=30`)
-  if (!r.ok) throw new Error(`${r.status}`)
-  return r.json()
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), 10_000)
+  try {
+    const r = await fetch(`${API}/releases?per_page=30`, { signal: ctrl.signal })
+    if (!r.ok) throw new Error(`${r.status}`)
+    return r.json()
+  } finally { clearTimeout(t) }
 }
 
 // Коммиты между двумя тегами через compare API — точный SHA-диапазон
 async function fetchCommitsBetween(base: string, head: string): Promise<GithubCommit[]> {
-  const r = await fetch(`${API}/compare/${base}...${head}`)
-  if (!r.ok) throw new Error(`${r.status}`)
-  const data = await r.json()
-  return data.commits ?? []
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), 10_000)
+  try {
+    const r = await fetch(`${API}/compare/${base}...${head}`, { signal: ctrl.signal })
+    if (!r.ok) throw new Error(`${r.status}`)
+    const data = await r.json()
+    return data.commits ?? []
+  } finally { clearTimeout(t) }
 }
 
 // Для самого первого релиза — берём все коммиты до тега
 async function fetchCommitsUpTo(tag: string): Promise<GithubCommit[]> {
-  const r = await fetch(`${API}/commits?sha=${tag}&per_page=100`)
-  if (!r.ok) throw new Error(`${r.status}`)
-  return r.json()
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), 10_000)
+  try {
+    const r = await fetch(`${API}/commits?sha=${tag}&per_page=100`, { signal: ctrl.signal })
+    if (!r.ok) throw new Error(`${r.status}`)
+    return r.json()
+  } finally { clearTimeout(t) }
 }
 
 // Кэш changelog — GitHub API без авторизации даёт лишь 60 запросов/час,
@@ -160,7 +177,8 @@ async function fetchChangelogUncached(): Promise<ReleaseChangelog[]> {
       const parsed = parseCommitMessage(c.commit.message)
       if (!parsed) continue
       if (parsed.counter > latestCounter) latestCounter = parsed.counter
-      if (parsed.lines.length > 0) commits.push({ counter: parsed.counter, lines: parsed.lines })
+      if (parsed.lines.length > 0 || parsed.techLines.length > 0)
+        commits.push({ counter: parsed.counter, lines: parsed.lines, techLines: parsed.techLines })
     }
 
     return {

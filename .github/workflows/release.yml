@@ -31,6 +31,16 @@ jobs:
           npm ci --prefix app
           npm ci --prefix installer
 
+      - name: Lint frontend
+        working-directory: app
+        shell: pwsh
+        run: npm run check
+
+      - name: Check Rust formatting
+        working-directory: app/src-tauri
+        shell: pwsh
+        run: cargo fmt --check
+
       - name: Download yt-dlp and ffmpeg
         working-directory: app
         shell: pwsh
@@ -85,6 +95,10 @@ jobs:
           $conf = Get-Content app/src-tauri/tauri.conf.json | ConvertFrom-Json
           $conf.version = $numeric
           $conf | ConvertTo-Json -Depth 10 | Set-Content app/src-tauri/tauri.conf.json
+          # Cargo.toml тоже — иначе CARGO_PKG_VERSION в коде останется 0.0.1
+          $cargo = Get-Content app/src-tauri/Cargo.toml -Raw
+          $cargo = $cargo -replace '(?s)(\[package\].*?version\s*=\s*)"[^"]*"', "`${1}`"$numeric`""
+          Set-Content app/src-tauri/Cargo.toml $cargo -NoNewline
         working-directory: .
       - name: Build main app (cargo)
         working-directory: app
@@ -110,6 +124,12 @@ jobs:
           $conf = Get-Content installer/src-tauri/tauri.conf.json | ConvertFrom-Json
           $conf.version = $numeric
           $conf | ConvertTo-Json -Depth 10 | Set-Content installer/src-tauri/tauri.conf.json
+
+          # Cargo.toml установщика — VERSION в commands.rs берётся из CARGO_PKG_VERSION.
+          # Без этого реестр всегда пишет 0.0.1 и обновление не определяется.
+          $cargo = Get-Content installer/src-tauri/Cargo.toml -Raw
+          $cargo = $cargo -replace '(?s)(\[package\].*?version\s*=\s*)"[^"]*"', "`${1}`"$numeric`""
+          Set-Content installer/src-tauri/Cargo.toml $cargo -NoNewline
 
       - name: Build portable ZIP
         shell: pwsh

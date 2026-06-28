@@ -1,6 +1,7 @@
 <script lang="ts">
   import '$lib/design/theme.css'
   import { onMount } from 'svelte'
+  import { fly } from 'svelte/transition'
   import { initQueue, destroyQueue } from '$lib/stores/queue.svelte'
   import { loadSettings } from '$lib/stores/settings.svelte'
   import Sidebar from '$lib/components/shared/Sidebar.svelte'
@@ -13,21 +14,14 @@
   import SaveSettingsPage from '$lib/components/save-settings/SaveSettingsPage.svelte'
   import UpdatesPage from '$lib/components/updates/UpdatesPage.svelte'
   import QueueColumn from '$lib/components/shared/QueueColumn.svelte'
-  import { openUrl } from '@tauri-apps/plugin-opener'
-  import { writeText } from '@tauri-apps/plugin-clipboard-manager'
   import { commands } from '$lib/bridge/commands'
 
+  import { tip } from '$lib/stores/tooltip.svelte'
+  import { tooltip } from '$lib/utils/tooltip'
   import type { Route } from '$lib/bridge/types'
 
   let route = $state<Route>('download')
-  const routeTitle: Record<Route, string> = {
-    download:       'Загрузка',
-    gallery:        'Галерея',
-    settings:       'Настройки',
-    'save-settings': 'Сохранение',
-    updates: 'Обновления',
-  }
-
+  function navigateTo(r: Route) { route = r }
   let fabOpen = $state(false)
   let logState = $state<'idle' | 'loading' | 'done' | 'error'>('idle')
   let logUrl = $state('')
@@ -37,7 +31,7 @@
     logState = 'loading'
     try {
       logUrl = await commands.uploadLog()
-      await writeText(logUrl)
+      await commands.writeText(logUrl)
       logState = 'done'
     } catch {
       logState = 'error'
@@ -50,14 +44,21 @@
     logUrl = ''
   }
 
+  let prefersReducedMotion = $state(false)
+  let initError = $state<string | null>(null)
   onMount(() => {
-    Promise.all([initQueue(), loadSettings()])
+    prefersReducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches
+    Promise.all([initQueue(), loadSettings()]).catch((e) => {
+      initError = e instanceof Error ? e.message : String(e)
+    })
+    // @ts-expect-error - глобальный навигатор для компонентов без bind:route
+    window.__navigate = (r: string) => { route = r as Route }
     return () => destroyQueue()
   })
 </script>
 
 <div class="app-shell">
-  <button class="app-logo-btn" onclick={() => openUrl('https://t.me/+rVTNJ_uXV0s4NTky')}>
+  <button class="app-logo-btn" aria-label="Открыть Telegram-канал" onclick={() => commands.openUrl('https://t.me/+rVTNJ_uXV0s4NTky')}>
     <img src="/logo.svg" alt="" class="app-logo" draggable="false" />
   </button>
   <div class="top-row">
@@ -66,17 +67,21 @@
   <div class="app-body">
     <Sidebar bind:route />
     <main class="content">
-      {#if route === 'download'}
-        <DownloadPage bind:route />
-      {:else if route === 'gallery'}
-        <GalleryPage bind:route />
-      {:else if route === 'settings'}
-        <SettingsPage />
-      {:else if route === 'save-settings'}
-        <SaveSettingsPage />
-      {:else if route === 'updates'}
-        <UpdatesPage />
-      {/if}
+      {#key route}
+        <div style="height:100%" in:fly={prefersReducedMotion ? {} : { x: 20, duration: 150, opacity: 0 }}>
+          {#if route === 'download'}
+            <DownloadPage bind:route />
+          {:else if route === 'gallery'}
+            <GalleryPage bind:route />
+          {:else if route === 'settings'}
+            <SettingsPage />
+          {:else if route === 'save-settings'}
+            <SaveSettingsPage />
+          {:else if route === 'updates'}
+            <UpdatesPage />
+          {/if}
+        </div>
+      {/key}
     </main>
     <aside class="sidebar-right">
       <QueueColumn />
@@ -84,7 +89,8 @@
   </div>
 
   <!-- FAB поддержки -->
-  <button class="fab" class:fab-open={fabOpen} onclick={() => fabOpen ? closeFab() : fabOpen = true} title="Поддержка">
+  <button class="fab" class:fab-open={fabOpen} onclick={() => fabOpen ? closeFab() : fabOpen = true}
+    use:tooltip={fabOpen ? '' : 'Поддержка'}>
     {#if fabOpen}
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4L4 12M4 4l8 8"/></svg>
     {:else}
@@ -92,9 +98,16 @@
     {/if}
   </button>
 
+  {#if initError}
+    <div class="init-error">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><line x1="8" y1="5" x2="8" y2="8"/><line x1="8" y1="11" x2="8.01" y2="11"/></svg>
+      Не удалось запустить: {initError}
+    </div>
+  {/if}
+
   {#if fabOpen}
     <div class="fab-menu">
-      <button class="fab-item" onclick={() => { openUrl('https://t.me/GRUZ_official'); closeFab() }}>
+      <button class="fab-item" onclick={() => { commands.openUrl('https://t.me/GRUZ_official'); closeFab() }}>
         <svg viewBox="0 0 16 16" fill="currentColor"><path d="M13.9 2.3L1.6 7c-.8.3-.8.8-.1 1l3.1 1 1.2 3.6c.2.5.3.7.7.7.3 0 .5-.1.7-.3l1.5-1.4 3.1 2.3c.6.3 1 .1 1.1-.5l2-9.4c.2-.8-.3-1.2-.9-.7z"/></svg>
         Написать разработчику
       </button>
@@ -127,15 +140,23 @@
   {/if}
 </div>
 
+{#if tip.visible}
+  <div class="tip-global"
+    class:tip-right={tip.placement === 'right'}
+    class:tip-bottom={tip.placement === 'bottom'}
+    style="left:{tip.x}px;top:{tip.y}px"
+  >{tip.text}</div>
+{/if}
+
 <style>
   .app-shell {
     position: relative;
     height: 100vh;
     display: flex;
     flex-direction: column;
-    background: linear-gradient(135deg, #1a1a1a 0%, #0f0f0f 100%);
+    background: linear-gradient(135deg, var(--bg-elevated) 0%, var(--bg-base) 100%);
     overflow: hidden;
-    border-radius: 48px;
+    border-radius: var(--radius-2xl);
     border: 1px solid rgba(0,0,0,1);
     box-shadow:
       inset 0 1px 0 rgba(120,120,120,0.5),
@@ -146,7 +167,7 @@
   .top-row {
     display: flex;
     flex-shrink: 0;
-    height: 40px;
+    height: var(--space-10);
     overflow: hidden;
   }
   .app-body {
@@ -157,10 +178,12 @@
   }
   .content {
     flex: 1;
-    overflow-y: auto;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
     background: var(--bg-content);
-    border-top-left-radius: 48px;
-    border-top-right-radius: 48px;
+    border-top-left-radius: var(--radius-2xl);
+    border-top-right-radius: var(--radius-2xl);
     border: 1px solid rgba(0,0,0,1);
     border-bottom: none;
     border-right: none;
@@ -195,8 +218,8 @@
   /* FAB */
   .fab {
     position: absolute;
-    bottom: 20px;
-    right: 14px;
+    bottom: var(--space-5);
+    right: var(--space-4);
     width: 36px;
     height: 36px;
     border-radius: 50%;
@@ -205,7 +228,7 @@
     color: var(--text-muted);
     cursor: pointer;
     display: flex; align-items: center; justify-content: center;
-    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
     z-index: 20;
   }
   .fab svg { width: 15px; height: 15px; }
@@ -222,7 +245,7 @@
     right: 14px;
     background: var(--bg-elevated);
     border: 1px solid var(--border-default);
-    border-radius: 12px;
+    border-radius: var(--radius-lg);
     padding: 6px;
     display: flex; flex-direction: column; gap: 2px;
     min-width: 210px;
@@ -233,7 +256,7 @@
   .fab-item {
     display: flex; align-items: center; gap: 8px;
     padding: 8px 10px;
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     border: none;
     background: transparent;
     color: var(--text-secondary);
@@ -257,4 +280,53 @@
 
   @keyframes spin { to { transform: rotate(360deg); } }
   .spin { animation: spin 0.9s linear infinite; }
+
+  .tip-global {
+    position: fixed;
+    transform: translateX(-50%) translateY(calc(-100% - 8px));
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    padding: 6px 10px;
+    font-size: var(--text-xs); font-weight: 500;
+    color: var(--text-primary); line-height: 1.5;
+    white-space: nowrap;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.55);
+    pointer-events: none;
+    z-index: 99999;
+    animation: tip-in 0.12s ease forwards;
+  }
+  .tip-global.tip-right {
+    transform: translateX(10px) translateY(-50%);
+    animation: tip-in-right 0.12s ease forwards;
+  }
+  .tip-global.tip-bottom {
+    transform: translateX(-50%) translateY(8px);
+    animation: tip-in-bottom 0.12s ease forwards;
+  }
+  @keyframes tip-in {
+    from { opacity: 0; transform: translateX(-50%) translateY(calc(-100% - 4px)); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(calc(-100% - 8px)); }
+  }
+  @keyframes tip-in-right {
+    from { opacity: 0; transform: translateX(6px) translateY(-50%); }
+    to   { opacity: 1; transform: translateX(10px) translateY(-50%); }
+  }
+  @keyframes tip-in-bottom {
+    from { opacity: 0; transform: translateX(-50%) translateY(4px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(8px); }
+  }
+
+  .init-error {
+    position: absolute; bottom: 64px; left: 50%; transform: translateX(-50%);
+    background: var(--bg-elevated); border: 1px solid var(--accent);
+    border-radius: var(--radius-card); padding: 8px 14px;
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; color: var(--accent);
+    z-index: 30; max-width: 320px;
+  }
+  .init-error svg { width: 14px; height: 14px; flex-shrink: 0; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+}
 </style>

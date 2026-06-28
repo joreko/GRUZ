@@ -1,5 +1,6 @@
 use crate::error::Result;
 use serde_json::json;
+use std::io::{Read, Seek, SeekFrom};
 
 /// Читает последний лог-файл, загружает на GitHub Gist анонимно, возвращает URL.
 #[tauri::command]
@@ -17,15 +18,21 @@ pub async fn upload_log() -> Result<String> {
         .collect();
     entries.sort_by_key(|e| e.file_name());
 
-    let last = entries.last().ok_or_else(|| anyhow::anyhow!("Лог-файлы не найдены"))?;
-    let content = std::fs::read_to_string(last.path()).map_err(|e| anyhow::anyhow!(e))?;
+    let last = entries
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("Лог-файлы не найдены"))?;
 
-    // Обрезаем до последних 200 КБ чтобы не превысить лимит Gist
-    let content = if content.len() > 200_000 {
-        &content[content.len() - 200_000..]
-    } else {
-        &content
-    };
+    // Читаем последние 200_000 байт через seek — не грузим весь файл в память
+    let mut file = std::fs::File::open(last.path()).map_err(|e| anyhow::anyhow!(e))?;
+    let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let read_size = 200_000.min(file_len as usize);
+    let mut content = String::with_capacity(read_size);
+    if read_size > 0 {
+        file.seek(SeekFrom::End(-(read_size as i64))).ok();
+        file.take(read_size as u64)
+            .read_to_string(&mut content)
+            .map_err(|e| anyhow::anyhow!(e))?;
+    }
 
     let filename = last.file_name().to_string_lossy().to_string();
     let body = json!({

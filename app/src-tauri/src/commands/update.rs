@@ -26,31 +26,65 @@ pub struct UpdateProgress {
 /// чтобы gruz.exe не был запущен. При ошибке чистит частично скачанный файл.
 #[tauri::command]
 pub async fn install_version(url: String, app: AppHandle) -> Result<()> {
-    let tmp = std::env::temp_dir().join("gruz_update_setup.exe");
+    // Имя кэш-файла берём из URL — уникально для каждой версии.
+    // Если файл уже полностью скачан (размер совпадёт с Content-Length), повторно не качаем.
+    let raw = url.rsplit('/').next().unwrap_or("gruz_setup.exe");
+    let raw = raw.split('?').next().unwrap_or("gruz_setup.exe");
+    // Санитизация: оставляем только безопасные символы, убираем path traversal
+    let filename: String = raw
+        .chars()
+        .filter(|c| c.is_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        .collect();
+    let filename = if filename.is_empty() {
+        "gruz_setup.exe".to_string()
+    } else {
+        filename
+    };
+    let tmp = std::env::temp_dir().join(&filename);
 
-    match download_and_launch(&url, &tmp, &app).await {
-        Ok(()) => {
-            // Даём финальному событию долететь до UI, затем закрываемся.
-            tokio::time::sleep(Duration::from_millis(700)).await;
-            app.exit(0);
-            Ok(())
-        }
-        Err(e) => {
-            // Удаляем частично скачанный файл, чтобы не оставлять мусор и не
-            // запустить повреждённый установщик при повторной попытке.
-            let _ = tokio::fs::remove_file(&tmp).await;
-            Err(e)
-        }
+    // Скачиваем — при ошибке чистим неполный файл.
+    if let Err(e) = download(&url, &tmp, &app).await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(e);
     }
+
+    // Запускаем — файл корректен, не удаляем даже при ошибке spawn.
+    launch_installer(&tmp, &app)?;
+
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    app.exit(0);
+    Ok(())
 }
 
-async fn download_and_launch(url: &str, tmp: &std::path::Path, app: &AppHandle) -> Result<()> {
+async fn download(url: &str, tmp: &std::path::Path, app: &AppHandle) -> Result<()> {
     // Таймаут только на установку соединения — само скачивание может быть долгим,
     // но зависший коннект не должен блокировать UI навсегда.
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| anyhow::anyhow!("не удалось создать HTTP-клиент: {e}"))?;
+
+    // Проверяем кэш: если файл уже лежит и размер совпадает — не качаем повторно.
+    let cached_size = tokio::fs::metadata(tmp).await.ok().map(|m| m.len());
+    if let Some(on_disk) = cached_size {
+        if let Ok(head) = client.head(url).send().await {
+            if let Some(remote_len) = head.content_length() {
+                if on_disk == remote_len && remote_len > 0 {
+                    // Файл уже полный — сигналим UI и возвращаемся без скачивания.
+                    let _ = app.emit(
+                        "update:progress",
+                        UpdateProgress {
+                            downloaded: on_disk,
+                            total: Some(remote_len),
+                            pct: Some(100),
+                            done: false,
+                        },
+                    );
+                    return Ok(());
+                }
+            }
+        }
+    }
 
     let resp = client
         .get(url)
@@ -79,7 +113,11 @@ async fn download_and_launch(url: &str, tmp: &std::path::Path, app: &AppHandle) 
         downloaded += chunk.len() as u64;
 
         let pct = total.map(|t| {
-            if t == 0 { 0 } else { ((downloaded * 100) / t).min(100) as u8 }
+            if t == 0 {
+                0
+            } else {
+                ((downloaded * 100) / t).min(100) as u8
+            }
         });
 
         // Шлём событие только при смене целого процента — не спамим UI
@@ -88,7 +126,12 @@ async fn download_and_launch(url: &str, tmp: &std::path::Path, app: &AppHandle) 
             last_pct = cur;
             let _ = app.emit(
                 "update:progress",
-                UpdateProgress { downloaded, total, pct, done: false },
+                UpdateProgress {
+                    downloaded,
+                    total,
+                    pct,
+                    done: false,
+                },
             );
         }
     }
@@ -105,6 +148,20 @@ async fn download_and_launch(url: &str, tmp: &std::path::Path, app: &AppHandle) 
         }
     }
 
+    // Сигнализируем UI что скачивание завершено (запуск — отдельный шаг).
+    let _ = app.emit(
+        "update:progress",
+        UpdateProgress {
+            downloaded,
+            total,
+            pct: Some(100),
+            done: false,
+        },
+    );
+    Ok(())
+}
+
+fn launch_installer(tmp: &std::path::Path, app: &AppHandle) -> Result<()> {
     let mut cmd = std::process::Command::new(tmp);
     #[cfg(windows)]
     {
@@ -116,8 +173,12 @@ async fn download_and_launch(url: &str, tmp: &std::path::Path, app: &AppHandle) 
 
     let _ = app.emit(
         "update:progress",
-        UpdateProgress { downloaded, total, pct: Some(100), done: true },
+        UpdateProgress {
+            downloaded: 0,
+            total: None,
+            pct: Some(100),
+            done: true,
+        },
     );
-
     Ok(())
 }

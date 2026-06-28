@@ -38,7 +38,8 @@ pub struct Progress {
 #[derive(Clone, serde::Serialize)]
 pub struct InstallState {
     pub installed:    bool,
-    pub version:      Option<String>,
+    pub version:      Option<String>,  // версия из реестра (установленная)
+    pub new_version:  String,          // версия этого установщика (CARGO_PKG_VERSION)
     pub install_dir:  String,
     pub same_version: bool,
 }
@@ -255,7 +256,8 @@ fn run_ps_script(script: &str) -> anyhow::Result<()> {
     let tmp = std::env::temp_dir().join(format!("gruz_{}.ps1", uuid::Uuid::new_v4()));
     std::fs::write(&tmp, script.as_bytes())?;
     let result = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-File",
+        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+               "-ExecutionPolicy", "Bypass", "-File",
                tmp.to_str().unwrap_or("")])
         .creation_flags(CREATE_NO_WINDOW)
         .output();
@@ -277,6 +279,7 @@ fn create_shortcuts(install_dir: &PathBuf, desktop: bool) -> anyhow::Result<()> 
     let ico = install_dir.join("gruz.ico");
     let exe_str = exe.to_string_lossy();
     let ico_str = ico.to_string_lossy();
+    let install_dir_str = install_dir.to_string_lossy();
 
     let appdata = std::env::var("APPDATA")
         .map_err(|_| anyhow::anyhow!("%APPDATA% недоступен"))?;
@@ -290,6 +293,7 @@ fn create_shortcuts(install_dir: &PathBuf, desktop: bool) -> anyhow::Result<()> 
     let mut script = format!(
         "$s=(New-Object -COM WScript.Shell).CreateShortcut('{start_str}')\n\
          $s.TargetPath='{exe_str}'\n\
+         $s.WorkingDirectory='{install_dir_str}'\n\
          $s.IconLocation='{ico_str},0'\n\
          $s.Description='Груз — загрузчик видео'\n\
          $s.Save()\n"
@@ -303,6 +307,7 @@ fn create_shortcuts(install_dir: &PathBuf, desktop: bool) -> anyhow::Result<()> 
         script.push_str(&format!(
             "$s2=(New-Object -COM WScript.Shell).CreateShortcut('{desk_str}')\n\
              $s2.TargetPath='{exe_str}'\n\
+             $s2.WorkingDirectory='{install_dir_str}'\n\
              $s2.IconLocation='{ico_str},0'\n\
              $s2.Description='Груз — загрузчик видео'\n\
              $s2.Save()\n"
@@ -431,7 +436,7 @@ fn set_autostart(enable: bool, exe_path: &PathBuf) -> anyhow::Result<()> {
         .open_subkey_with_flags(REG_RUN, KEY_READ | KEY_WRITE)?;
 
     if enable {
-        key.set_value("Gruz", &exe_path.to_string_lossy().as_ref())?;
+        key.set_value("Gruz", &format!("\"{}\"", exe_path.to_string_lossy()).as_str())?;
     } else {
         let _ = key.delete_value("Gruz");
     }
@@ -525,6 +530,7 @@ pub fn check_install() -> InstallState {
     InstallState {
         installed,
         version,
+        new_version: VERSION.to_string(),
         install_dir: dir.to_string_lossy().into_owned(),
         same_version,
     }
@@ -618,8 +624,16 @@ async fn do_install(app: &AppHandle, opts: InstallOptions) -> anyhow::Result<()>
 
     let staging = make_staging_dir()?;
 
-    // При любой ошибке — очищаем staging
-    let result = do_install_to_staging(&staging, app).await;
+    // Прогресс-шаги до тяжёлого I/O
+    emit(app, Progress { step: "Копирую файлы…".into(), pct: 15, done: false, error: None });
+
+    // I/O тяжёлый (170+ МБ) — запускаем в blocking-пуле, не блокируем async runtime
+    let staging_clone = staging.clone();
+    let result = tokio::task::spawn_blocking(move || do_install_to_staging_sync(&staging_clone))
+        .await
+        .map_err(|e| anyhow::anyhow!("spawn_blocking panic: {e}"))
+        .and_then(|r| r);
+
     if result.is_err() {
         let _ = std::fs::remove_dir_all(&staging);
         return result;
@@ -691,26 +705,14 @@ async fn do_install(app: &AppHandle, opts: InstallOptions) -> anyhow::Result<()>
     Ok(())
 }
 
-/// Записывает все файлы в staging-директорию
-async fn do_install_to_staging(
-    staging: &PathBuf,
-    app: &AppHandle,
-) -> anyhow::Result<()> {
-    emit(app, Progress { step: "Копирую Груз…".into(), pct: 15, done: false, error: None });
-    write_and_verify(GRUZ_EXE, &staging.join("gruz.exe"))?;
-
-    emit(app, Progress { step: "Копирую yt-dlp…".into(), pct: 35, done: false, error: None });
-    write_and_verify(YTDLP_EXE, &staging.join("yt-dlp.exe"))?;
-
-    emit(app, Progress { step: "Копирую ffmpeg…".into(), pct: 55, done: false, error: None });
+/// Записывает все файлы в staging-директорию — синхронный I/O, вызывать через spawn_blocking
+fn do_install_to_staging_sync(staging: &PathBuf) -> anyhow::Result<()> {
+    write_and_verify(GRUZ_EXE,   &staging.join("gruz.exe"))?;
+    write_and_verify(YTDLP_EXE,  &staging.join("yt-dlp.exe"))?;
     write_and_verify(FFMPEG_EXE, &staging.join("ffmpeg.exe"))?;
-
-    write_and_verify(GRUZ_ICO, &staging.join("gruz.ico"))?;
-
-    // Копируем установщик как средство удаления — из текущего exe в staging
+    write_and_verify(GRUZ_ICO,   &staging.join("gruz.ico"))?;
     let self_exe = std::env::current_exe()?;
     std::fs::copy(&self_exe, staging.join("gruz-setup.exe"))?;
-
     Ok(())
 }
 
@@ -767,18 +769,12 @@ async fn do_uninstall(app: &AppHandle) -> anyhow::Result<()> {
     // Планируем удаление папки и себя после перезагрузки через MoveFileExW
     schedule_delete_on_reboot(&dir);
 
-    // Fallback: cmd timeout для удаления папки без перезагрузки
-    let dir_str = dir.to_string_lossy().to_string();
-    if let Err(_) = std::process::Command::new("cmd")
-        .args(["/c", &format!(
-            "timeout /t 1 /nobreak >nul && rmdir /s /q \"{}\"",
-            dir_str
-        )])
+    // Fallback: cmd для удаления папки без перезагрузки — args как массив, без injection
+    let _ = std::process::Command::new("cmd")
+        .args(["/c", "timeout", "/t", "1", "/nobreak", ">nul", "&&",
+               "rmdir", "/s", "/q", dir.to_string_lossy().as_ref()])
         .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-    {
-        // Не фатально — папка удалится при перезагрузке
-    }
+        .spawn();
 
     tokio::time::sleep(std::time::Duration::from_millis(800)).await;
     app.exit(0);

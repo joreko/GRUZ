@@ -5,16 +5,25 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskState {
-    Queued,
-    Fetching,   // получаем метаданные
-    Waiting,    // в очереди ожидания воркера
-    Scheduled,  // ждёт schedule_at
+    Waiting,
     Downloading,
-    Converting,  // ffmpeg постпроцессинг после загрузки
-    Paused,
+    Converting,
     Completed,
     Failed,
     Cancelled,
+}
+
+impl std::fmt::Display for TaskState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TaskState::Waiting => write!(f, "waiting"),
+            TaskState::Downloading => write!(f, "downloading"),
+            TaskState::Converting => write!(f, "converting"),
+            TaskState::Completed => write!(f, "completed"),
+            TaskState::Failed => write!(f, "failed"),
+            TaskState::Cancelled => write!(f, "cancelled"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -31,7 +40,7 @@ pub struct DownloadTask {
     pub url: String,
     pub video_id: Option<String>,
     pub channel_id: Option<String>,
-    pub platform: String,             // 'youtube' | 'vk' | 'tiktok' | ...
+    pub platform: String, // 'youtube' | 'vk' | 'tiktok' | ...
     pub title: Option<String>,
     pub thumbnail: Option<String>,
     pub channel: Option<String>,
@@ -39,16 +48,16 @@ pub struct DownloadTask {
     pub is_playlist: bool,
     pub audio_codec: Option<String>,
     pub video_codec: Option<String>,
-    pub format: String,               // "video" | "audio"
-    pub quality: String,              // format_id из yt-dlp
-    pub fps: Option<u32>,             // ограничение fps (None = оригинал)
-    pub bitrate: Option<u32>,         // ограничение битрейта kbps (None = максимум)
-    pub container: String,            // "mp4", "webm", "mp3"
-    pub trim_start: Option<i64>,      // секунды | None
-    pub trim_end: Option<i64>,        // секунды | None
+    pub format: String,          // "video" | "video_only" | "audio"
+    pub quality: String,         // format_id из yt-dlp
+    pub fps: Option<u32>,        // ограничение fps (None = оригинал)
+    pub bitrate: Option<u32>,    // ограничение битрейта kbps (None = максимум)
+    pub container: String,       // "mp4", "webm", "mp3"
+    pub trim_start: Option<i64>, // секунды | None
+    pub trim_end: Option<i64>,   // секунды | None
     pub state: TaskState,
     pub priority: Priority,
-    pub progress: f32,                // 0.0 - 100.0
+    pub progress: f32, // 0.0 - 100.0
     pub speed: Option<String>,
     pub eta: Option<String>,
     pub error: Option<String>,
@@ -79,7 +88,7 @@ impl DownloadTask {
             container,
             trim_start: None,
             trim_end: None,
-            state: TaskState::Queued,
+            state: TaskState::Waiting,
             priority: Priority::Normal,
             progress: 0.0,
             speed: None,

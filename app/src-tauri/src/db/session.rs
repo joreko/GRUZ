@@ -22,7 +22,7 @@ impl Database {
             .await?;
         let session = sqlx::query_as::<_, Session>(
             "SELECT id, last_url, last_dir, window_x, window_y, window_w, window_h, updated_at
-             FROM session WHERE id = 1"
+             FROM session WHERE id = 1",
         )
         .fetch_one(&self.pool)
         .await?;
@@ -33,11 +33,14 @@ impl Database {
         let now = Utc::now().timestamp();
         sqlx::query(
             "UPDATE session SET last_url=?, last_dir=?, window_x=?, window_y=?,
-             window_w=?, window_h=?, updated_at=? WHERE id=1"
+             window_w=?, window_h=?, updated_at=? WHERE id=1",
         )
-        .bind(&session.last_url).bind(&session.last_dir)
-        .bind(session.window_x).bind(session.window_y)
-        .bind(session.window_w).bind(session.window_h)
+        .bind(&session.last_url)
+        .bind(&session.last_dir)
+        .bind(session.window_x)
+        .bind(session.window_y)
+        .bind(session.window_w)
+        .bind(session.window_h)
         .bind(now)
         .execute(&self.pool)
         .await?;

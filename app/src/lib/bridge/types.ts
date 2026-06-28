@@ -3,8 +3,8 @@
 export type Route = 'download' | 'gallery' | 'settings' | 'save-settings' | 'updates'
 
 export type TaskState =
-  | 'queued' | 'fetching' | 'waiting' | 'scheduled' | 'downloading' | 'converting'
-  | 'paused' | 'completed' | 'failed' | 'cancelled'
+  | 'waiting' | 'downloading' | 'converting'
+  | 'completed' | 'failed' | 'cancelled'
 
 export type Priority = 'low' | 'normal' | 'high'
 
@@ -119,21 +119,6 @@ export interface Session {
   updated_at: number
 }
 
-export interface QualityProfile {
-  id: number
-  name: string
-  format: string
-  quality: string
-  container: string
-  audio_codec: string | null
-  video_codec: string | null
-  fps: number | null
-  bitrate: number | null
-  is_default: boolean
-  sort_order: number
-  created_at: number
-}
-
 export interface Settings {
   download_dir: string
   max_concurrent: number
@@ -150,7 +135,6 @@ export interface Settings {
   ytdlp_extra_args: string
   theme: string
   minimize_to_tray: boolean
-  ytdlp_auto_update: boolean
   // Папки сохранения по типу контента (пусто = download_dir)
   save_dir_video: string
   save_dir_audio: string
@@ -183,7 +167,7 @@ export interface StartDownloadRequest {
 
 export interface DownloadProgress {
   task_id: string
-  state: 'downloading' | 'finished' | 'error' // yt-dlp прогресс-статусы
+  state: 'downloading' | 'finished' | 'error' | 'converting'
   progress: number
   speed: string | null
   eta: string | null

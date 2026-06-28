@@ -22,12 +22,12 @@ pub struct VideoInfo {
 pub struct VideoFormat {
     pub format_id: String,
     pub ext: String,
-    pub resolution: Option<String>,  // "1920x1080"
+    pub resolution: Option<String>, // "1920x1080"
     pub fps: Option<f64>,
     pub vcodec: Option<String>,
     pub acodec: Option<String>,
-    pub abr: Option<f64>,            // audio bitrate kbps
-    pub vbr: Option<f64>,            // video bitrate kbps
+    pub abr: Option<f64>, // audio bitrate kbps
+    pub vbr: Option<f64>, // video bitrate kbps
     pub filesize: Option<i64>,
     pub format_note: Option<String>, // "1080p", "720p60", "DASH audio"
     pub is_audio_only: bool,

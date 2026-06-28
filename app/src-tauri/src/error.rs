@@ -1,16 +1,22 @@
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
-    #[error("yt-dlp error: {0}")]
+    #[error("ошибка yt-dlp: {0}")]
     YtDlp(String),
 
-    #[error("database error: {0}")]
+    #[error("ошибка базы данных: {0}")]
     Database(#[from] sqlx::Error),
 
-    #[error("io error: {0}")]
+    #[error("ошибка ввода-вывода: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("download failed: {0}")]
+    #[error("ошибка загрузки: {0}")]
     DownloadFailed(String),
+
+    #[error("отменено")]
+    Cancelled,
+
+    #[error("ошибка проверки: {0}")]
+    Validation(String),
 
     #[error(transparent)]
     Other(#[from] anyhow::Error),

@@ -10,7 +10,7 @@
   type ComponentState = 'pending' | 'active' | 'done' | 'error'
 
   interface ProgressEvent { step: string; pct: number; done: boolean; error: string | null }
-  interface InstallState { installed: boolean; version: string | null; install_dir: string; same_version: boolean }
+  interface InstallState { installed: boolean; version: string | null; new_version: string; install_dir: string; same_version: boolean }
   interface Component { id: string; label: string; state: ComponentState }
 
   // --- Состояние ---
@@ -27,6 +27,7 @@
   let addToPath = $state(false)
   let autostart = $state(false)
   let launchAfter = $state(true)
+  let showAdvanced = $state(false)
 
   let payloadSizeMb = $state<number | null>(null)
   let changelogText = $state('')
@@ -121,9 +122,11 @@
     })
   })
 
-  // B8: автозапуск после install если launchAfter включён
+  // B8: автозапуск после install если launchAfter включён — однократно через флаг
+  let launchTriggered = false
   $effect(() => {
-    if (screen === 'done' && mode === 'install' && launchAfter) {
+    if (screen === 'done' && mode === 'install' && launchAfter && !launchTriggered) {
+      launchTriggered = true
       invoke('launch_gruz').finally(() => getCurrentWindow().close())
     }
   })
@@ -171,7 +174,7 @@
     try {
       const dir = await invoke<string>('pick_install_dir')
       if (dir) customInstallDir = dir
-    } catch(e) {}
+    } catch { /* пользователь отменил диалог — нормально */ }
   }
 
   async function launchGruz() {
@@ -241,60 +244,73 @@
           <input type="checkbox" bind:checked={licenseAccepted}/>
           <span>Я принимаю условия соглашения</span>
         </label>
-
-        <!-- B2: Папка установки -->
-        <div class="field-label">Папка установки</div>
-        <div class="dir-row">
-          <input class="dir-input" type="text" bind:value={customInstallDir} spellcheck="false" aria-label="Папка установки"/>
-          <button class="btn-pick" onclick={pickDir} title="Выбрать папку">…</button>
-        </div>
-
-        <!-- B3: Опции -->
-        <div class="opts">
-          <label class="opt-check">
-            <input type="checkbox" bind:checked={desktopShortcut}/>
-            <span>Ярлык на рабочем столе</span>
-          </label>
-          <label class="opt-check">
-            <input type="checkbox" bind:checked={addToPath}/>
-            <span>Добавить в PATH</span>
-          </label>
-          <label class="opt-check">
-            <input type="checkbox" bind:checked={autostart}/>
-            <span>Запускать при старте Windows</span>
-          </label>
-          <label class="opt-check">
-            <input type="checkbox" bind:checked={launchAfter}/>
-            <span>Запустить после установки</span>
-          </label>
-        </div>
       </div>
+
+      {#if showAdvanced}
+        <div class="advanced-panel">
+          <div class="field-label">Папка установки</div>
+          <div class="dir-row">
+            <input class="dir-input" type="text" bind:value={customInstallDir} spellcheck="false" aria-label="Папка установки"/>
+            <button class="btn-pick" onclick={pickDir} title="Выбрать папку">…</button>
+          </div>
+          <div class="opts">
+            <label class="opt-check">
+              <input type="checkbox" bind:checked={desktopShortcut}/>
+              <span>Ярлык на рабочем столе</span>
+            </label>
+            <label class="opt-check">
+              <input type="checkbox" bind:checked={addToPath}/>
+              <span>Добавить в PATH</span>
+            </label>
+            <label class="opt-check">
+              <input type="checkbox" bind:checked={autostart}/>
+              <span>Запускать при старте Windows</span>
+            </label>
+            <label class="opt-check">
+              <input type="checkbox" bind:checked={launchAfter}/>
+              <span>Запустить после установки</span>
+            </label>
+          </div>
+        </div>
+      {/if}
+
       <div class="actions">
         <button class="btn-primary" disabled={!licenseAccepted} onclick={startInstall}>
           {mode === 'upgrade' ? 'Обновить' : 'Установить'}
         </button>
+        <button class="btn-ghost" onclick={() => showAdvanced = !showAdvanced}>Настроить</button>
         <button class="btn-ghost" onclick={close}>Отмена</button>
       </div>
 
     <!-- Уже установлено -->
     {:else if screen === 'installed'}
       <div class="installed-block">
-        <div class="installed-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>
+        <div class="installed-icon" class:installed-icon-update={!installState?.same_version}>
+          {#if installState?.same_version}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>
+          {:else}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+          {/if}
         </div>
         <div class="installed-text">
-          <span class="installed-title">Груз установлен</span>
-          <span class="installed-ver">Версия {installState?.version ?? '—'}{installState?.same_version ? ' · актуальная' : ' · доступно обновление'}</span>
+          {#if installState?.same_version}
+            <span class="installed-title">Груз установлен</span>
+            <span class="installed-ver">v{installState.version} · актуальная версия</span>
+          {:else}
+            <span class="installed-title">Доступно обновление</span>
+            <span class="installed-ver">v{installState?.version ?? '—'} → v{installState?.new_version}</span>
+          {/if}
         </div>
       </div>
       <div class="installed-dir">{installState?.install_dir}</div>
       <div class="actions">
-        {#if !installState?.same_version}
-          <button class="btn-primary" onclick={goUpgrade}>Обновить</button>
-        {:else}
+        {#if installState?.same_version}
           <button class="btn-primary" onclick={launchGruz}>Запустить</button>
+          <button class="btn-ghost" onclick={goInstall}>Переустановить</button>
+        {:else}
+          <button class="btn-primary" onclick={goUpgrade}>Обновить до v{installState?.new_version}</button>
+          <button class="btn-ghost" onclick={launchGruz}>Запустить текущую</button>
         {/if}
-        <button class="btn-ghost" onclick={goInstall}>Переустановить</button>
         <button class="btn-danger" onclick={goUninstall}>Удалить</button>
       </div>
 
@@ -408,7 +424,7 @@
     <div class="spacer"></div>
 
     <div class="meta">
-      <span>v{installState?.version ?? '0.0.1'}</span>
+      <span>v{installState?.new_version ?? '—'}</span>
       <span>·</span>
       <span class="meta-link" role="button" tabindex="0"
         onclick={() => invoke('open_url', {url:'https://github.com/joreko/GRUZ'})}
@@ -443,6 +459,7 @@
 
   /* Лицензия */
   .license-block{display:flex;flex-direction:column;gap:10px}
+  .advanced-panel{display:flex;flex-direction:column;gap:8px;padding:10px 12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:8px}
   .license-title{font-size:13px;font-weight:600;color:rgba(255,255,255,.7)}
   .license-scroll{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);border-radius:10px;padding:14px 16px;max-height:110px;overflow-y:auto;display:flex;flex-direction:column;gap:8px}
   .license-scroll p,.license-scroll li{font-size:11px;color:rgba(255,255,255,.4);line-height:1.6}
@@ -470,6 +487,7 @@
   /* Уже установлено */
   .installed-block{display:flex;align-items:center;gap:14px;margin-bottom:10px}
   .installed-icon svg{width:36px;height:36px;color:#3dff7a}
+  .installed-icon-update svg{color:#ff9a3d}
   .installed-text{display:flex;flex-direction:column;gap:3px}
   .installed-title{font-size:16px;font-weight:700;color:#fff}
   .installed-ver{font-size:11px;color:rgba(255,255,255,.4)}
