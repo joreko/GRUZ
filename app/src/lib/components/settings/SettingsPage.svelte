@@ -1,26 +1,80 @@
 <script lang="ts">
-  import { store, updateSetting } from '$lib/stores/settings.svelte'
-  import { open } from '@tauri-apps/plugin-dialog'
+  import { store, loadSettings, updateSetting } from '$lib/stores/settings.svelte'
+  import type { Settings } from '$lib/bridge/types'
+  import { commands } from '$lib/bridge/commands'
+  import { onMount } from 'svelte'
+
+  let saveStatus = $state<'saved'|'saving'|'error'|''>('')
+  let saveTimer: ReturnType<typeof setTimeout> | undefined
+
+  onMount(() => {
+    if (!store.settings) loadSettings()
+  })
 
   async function pickDir() {
-    const dir = await open({ directory: true, multiple: false })
+    const dir = await commands.pickDirectory()
     if (typeof dir === 'string') {
-      await updateSetting('download_dir', dir)
+      await doUpdateSetting('download_dir', dir)
     }
   }
+
+  async function doUpdateSetting(key: string, value: string) {
+    saveStatus = 'saving'
+    try {
+      await updateSetting(key as keyof Settings, value)
+      saveStatus = 'saved'
+      clearTimeout(saveTimer)
+      saveTimer = setTimeout(() => { saveStatus = '' }, 2000)
+    } catch {
+      saveStatus = 'error'
+      clearTimeout(saveTimer)
+      saveTimer = setTimeout(() => { saveStatus = '' }, 3000)
+    }
+  }
+
+  function handleChange(e: Event, key: string) {
+    const target = e.currentTarget as HTMLInputElement | HTMLSelectElement
+    doUpdateSetting(key, target.value)
+  }
+
+  function handleCheck(e: Event, key: string) {
+    const target = e.currentTarget as HTMLInputElement
+    doUpdateSetting(key, String(target.checked))
+  }
+
+  // Для download_dir используем bind:value — обновляется сразу после выбора папки
+  let localDownloadDir = $state('')
+  $effect(() => {
+    if (store.settings) localDownloadDir = store.settings.download_dir
+  })
 </script>
 
 <div class="page">
-  <h2>Настройки</h2>
+  <div class="header-row">
+    <h2>Настройки</h2>
+    {#if saveStatus === 'saving'}
+      <span class="save-status saving">Сохранение...</span>
+    {:else if saveStatus === 'saved'}
+      <span class="save-status saved">Сохранено</span>
+    {:else if saveStatus === 'error'}
+      <span class="save-status error">Ошибка сохранения</span>
+    {/if}
+  </div>
 
-  {#if store.settings}
+  {#if store.error}
+    <div class="error-banner">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <span>{store.error}</span>
+      <button class="btn-retry" onclick={loadSettings}>Повторить</button>
+    </div>
+  {:else if store.settings}
     <section class="section">
       <h3>Загрузка</h3>
 
       <div class="row">
         <label for="download-dir">Папка загрузки</label>
         <div class="dir-row">
-          <input id="download-dir" type="text" value={store.settings.download_dir} readonly placeholder="Не выбрана" />
+          <input id="download-dir" type="text" bind:value={localDownloadDir} placeholder="Не выбрана" onchange={() => doUpdateSetting('download_dir', localDownloadDir)} />
           <button class="btn-browse" onclick={pickDir}>Выбрать</button>
         </div>
       </div>
@@ -30,7 +84,7 @@
         <select
           id="max-concurrent"
           value={String(store.settings.max_concurrent)}
-          onchange={e => updateSetting('max_concurrent', e.currentTarget.value)}
+          onchange={e => doUpdateSetting('max_concurrent', (e.currentTarget as HTMLSelectElement).value)}
         >
           {#each [1,2,3,4,5] as n}
             <option value={String(n)}>{n}</option>
@@ -38,18 +92,6 @@
         </select>
       </div>
 
-      <div class="row">
-        <label for="ytdlp-autoupdate">Авто-обновление yt-dlp</label>
-        <label class="checkbox-label">
-          <input
-            id="ytdlp-autoupdate"
-            type="checkbox"
-            checked={store.settings.ytdlp_auto_update}
-            onchange={e => updateSetting('ytdlp_auto_update', String(e.currentTarget.checked))}
-          />
-          <span class="checkbox-box"></span>
-        </label>
-      </div>
     </section>
 
     <section class="section">
@@ -60,7 +102,7 @@
         <select
           id="default-format"
           value={store.settings.default_format}
-          onchange={e => updateSetting('default_format', e.currentTarget.value)}
+          onchange={e => handleChange(e, 'default_format')}
         >
           <option value="video">Видео</option>
           <option value="audio">Аудио</option>
@@ -72,7 +114,7 @@
         <select
           id="default-quality"
           value={store.settings.default_quality}
-          onchange={e => updateSetting('default_quality', e.currentTarget.value)}
+          onchange={e => handleChange(e, 'default_quality')}
         >
           <option value="best">Лучшее</option>
           <option value="1080p">1080p</option>
@@ -86,11 +128,19 @@
         <select
           id="default-container"
           value={store.settings.default_container}
-          onchange={e => updateSetting('default_container', e.currentTarget.value)}
+          onchange={e => handleChange(e, 'default_container')}
         >
-          <option value="mp4">MP4</option>
-          <option value="webm">WebM</option>
-          <option value="mp3">MP3</option>
+          <optgroup label="Видео">
+            <option value="mp4">MP4</option>
+            <option value="webm">WebM</option>
+            <option value="mkv">MKV</option>
+            <option value="mov">MOV</option>
+          </optgroup>
+          <optgroup label="Аудио">
+            <option value="mp3">MP3</option>
+            <option value="m4a">M4A</option>
+            <option value="opus">Opus</option>
+          </optgroup>
         </select>
       </div>
     </section>
@@ -105,7 +155,7 @@
           type="text"
           value={store.settings.proxy}
           placeholder="http://proxy:port"
-          onchange={e => updateSetting('proxy', e.currentTarget.value)}
+          onchange={e => handleChange(e, 'proxy')}
         />
       </div>
 
@@ -116,7 +166,7 @@
           type="text"
           value={store.settings.ytdlp_extra_args}
           placeholder="--no-check-certificate ..."
-          onchange={e => updateSetting('ytdlp_extra_args', e.currentTarget.value)}
+          onchange={e => handleChange(e, 'ytdlp_extra_args')}
         />
       </div>
 
@@ -127,7 +177,7 @@
             id="minimize-tray"
             type="checkbox"
             checked={store.settings.minimize_to_tray}
-            onchange={e => updateSetting('minimize_to_tray', String(e.currentTarget.checked))}
+            onchange={e => handleCheck(e, 'minimize_to_tray')}
           />
           <span class="checkbox-box"></span>
         </label>
@@ -140,7 +190,7 @@
 
 <style>
   .page {
-    padding: 32px 36px;
+    padding: var(--space-8) var(--space-9);
     max-width: 600px;
     display: flex;
     flex-direction: column;
@@ -149,16 +199,41 @@
 
   h2 {
     margin: 0;
-    font-size: 20px;
+    font-size: var(--text-xl);
     font-weight: 600;
     color: var(--text-primary);
+  }
+
+  .header-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .save-status {
+    font-size: var(--text-xs);
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    transition: opacity var(--transition-slow);
+  }
+  .save-status.saving {
+    color: var(--status-info);
+    background: color-mix(in srgb, var(--status-info) 10%, transparent);
+  }
+  .save-status.saved {
+    color: var(--status-success);
+    background: color-mix(in srgb, var(--status-success) 10%, transparent);
+  }
+  .save-status.error {
+    color: var(--status-error);
+    background: color-mix(in srgb, var(--status-error) 10%, transparent);
   }
 
   /* Секции — как info-card в DownloadPage */
   .section {
     background: var(--bg-elevated);
     border: 1px solid var(--border-subtle);
-    border-radius: 14px;
+    border-radius: var(--radius-panel);
     padding: 20px 22px;
     display: flex;
     flex-direction: column;
@@ -194,7 +269,7 @@
     padding: 8px 12px;
     background: var(--bg-overlay);
     border: 1px solid var(--border-default);
-    border-radius: 10px;
+    border-radius: var(--radius-card);
     color: var(--text-primary);
     font-size: 13px;
     font-family: var(--font-sans);
@@ -213,7 +288,7 @@
     padding: 8px 12px;
     background: var(--bg-overlay);
     border: 1px solid var(--border-default);
-    border-radius: 10px;
+    border-radius: var(--radius-card);
     color: var(--text-primary);
     font-size: 13px;
     font-family: var(--font-sans);
@@ -237,7 +312,7 @@
     display: inline-flex; align-items: center;
     height: 34px; padding: 0 14px;
     background: var(--bg-overlay); border: 1px solid var(--border-default);
-    border-radius: 10px; color: var(--text-secondary);
+    border-radius: var(--radius-card); color: var(--text-secondary);
     font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap;
     transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
   }
@@ -262,7 +337,7 @@
   }
   .checkbox-box {
     width: 16px; height: 16px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     border: 1.5px solid var(--border-default);
     background: var(--bg-overlay);
     transition: background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
@@ -292,4 +367,22 @@
     color: var(--text-muted);
     font-size: 13px;
   }
+
+  /* Error banner */
+  .error-banner {
+    display: flex; align-items: center; gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    background: color-mix(in srgb, var(--status-error) 10%, transparent); border: 1px solid color-mix(in srgb, var(--status-error) 30%, transparent);
+    border-radius: var(--radius-md); color: var(--status-error);
+    font-size: var(--text-sm);
+  }
+  .error-banner svg { width: 16px; height: 16px; flex-shrink: 0; }
+  .btn-retry {
+    margin-left: auto; padding: var(--space-1) var(--space-3);
+    background: color-mix(in srgb, var(--status-error) 15%, transparent); border: 1px solid color-mix(in srgb, var(--status-error) 30%, transparent);
+    border-radius: var(--radius-sm); color: var(--status-error);
+    font-size: var(--text-xs); cursor: pointer;
+    transition: background var(--transition-fast);
+  }
+  .btn-retry:hover { background: color-mix(in srgb, var(--status-error) 25%, transparent); }
 </style>

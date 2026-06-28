@@ -25,10 +25,7 @@
       }
     ],
     "security": {
-      "csp": null
-    },
-    "trayIcon": {
-      "iconPath": "icons/icon.png"
+      "csp": "default-src 'self'; img-src 'self' data: https://i.ytimg.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://api.github.com https://gist.githubusercontent.com"
     }
   },
   "bundle": {

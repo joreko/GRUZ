@@ -15,7 +15,6 @@ impl Queue {
 
     pub fn push(&mut self, task: DownloadTask) {
         self.tasks.push(task);
-        self.sort();
     }
 
     pub fn all(&self) -> &[DownloadTask] {
@@ -35,7 +34,11 @@ impl Queue {
         self.tasks
             .iter()
             .filter(|t| t.state == TaskState::Waiting)
-            .max_by(|a, b| a.priority.cmp(&b.priority).then(b.created_at.cmp(&a.created_at)))
+            .max_by(|a, b| {
+                a.priority
+                    .cmp(&b.priority)
+                    .then(a.created_at.cmp(&b.created_at))
+            })
     }
 
     pub fn remove(&mut self, id: &str) -> Option<DownloadTask> {
@@ -46,28 +49,68 @@ impl Queue {
         }
     }
 
+    pub fn clear(&mut self) {
+        self.tasks.clear();
+    }
+
     pub fn update_state(&mut self, id: &str, state: TaskState) {
         if let Some(task) = self.get_mut(id) {
             task.state = state;
         }
     }
 
-    pub fn set_priority(&mut self, id: &str, priority: Priority) {
+    pub fn set_priority(&mut self, id: &str, priority: Priority) -> bool {
         if let Some(task) = self.get_mut(id) {
             task.priority = priority;
             self.sort();
+            true
+        } else {
+            false
         }
     }
 
+    pub fn reorder(&mut self, id: &str, new_index: usize) -> bool {
+        let pos = self.tasks.iter().position(|t| t.id == id);
+        let Some(pos) = pos else { return false };
+        let new_index = new_index.min(self.tasks.len().saturating_sub(1));
+        if pos == new_index {
+            return true;
+        }
+        let task = self.tasks.remove(pos);
+        self.tasks.insert(new_index, task);
+        true
+    }
+
+    /// Удалить из очереди завершённые/отменённые/упавшие задачи.
+    /// Возвращает ID удалённых задач — оркестратор удалит их из БД.
+    pub fn trim_completed(&mut self) -> Vec<String> {
+        let mut removed = Vec::new();
+        self.tasks.retain(|t| {
+            if matches!(
+                t.state,
+                TaskState::Waiting | TaskState::Downloading | TaskState::Converting
+            ) {
+                true
+            } else {
+                removed.push(t.id.clone());
+                false
+            }
+        });
+        removed
+    }
+
     pub fn active_count(&self) -> usize {
-        self.tasks.iter()
+        self.tasks
+            .iter()
             .filter(|t| t.state == TaskState::Downloading || t.state == TaskState::Converting)
             .count()
     }
 
     fn sort(&mut self) {
         self.tasks.sort_by(|a, b| {
-            b.priority.cmp(&a.priority).then(a.created_at.cmp(&b.created_at))
+            b.priority
+                .cmp(&a.priority)
+                .then(a.created_at.cmp(&b.created_at))
         });
     }
 }

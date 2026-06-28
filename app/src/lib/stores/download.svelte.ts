@@ -6,6 +6,7 @@ export const dl = $state({
   info:           null as VideoInfo | null,
   loading:        false,
   error:          null as string | null,
+  queueError:     null as string | null,  // ошибка добавления в очередь (не ошибка загрузки инфо)
   queued:         false,
   queuing:        false,
   format:         'video',
@@ -18,3 +19,22 @@ export const dl = $state({
   lastFetchedUrl: '',
   currentEmoji:   '',
 })
+
+export function reset() {
+  dl.url = ''
+  dl.info = null
+  dl.loading = false
+  dl.error = null
+  dl.queueError = null
+  dl.queued = false
+  dl.queuing = false
+  dl.quality = ''
+  dl.fps = null
+  dl.bitrate = null
+  dl.videoCodec = null
+  dl.audioCodec = null
+  dl.lastFetchedUrl = ''
+  dl.currentEmoji = ''
+  dl.container = 'mp4'
+  dl.format = 'video'
+}

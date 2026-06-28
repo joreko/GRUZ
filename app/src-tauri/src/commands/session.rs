@@ -2,9 +2,7 @@ use crate::{db::session::Session, error::Result, orchestrator::OrchestratorHandl
 use tauri::State;
 
 #[tauri::command]
-pub async fn get_session(
-    orchestrator: State<'_, OrchestratorHandle>,
-) -> Result<Session> {
+pub async fn get_session(orchestrator: State<'_, OrchestratorHandle>) -> Result<Session> {
     let orch = orchestrator.lock().await;
     orch.db.get_session().await
 }

@@ -1,7 +1,7 @@
 {
   "name": "gruz",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.0.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -16,7 +16,6 @@
     "@tauri-apps/cli": "^2.11.3",
     "@tsconfig/svelte": "^5.0.8",
     "@types/node": "^26.0.0",
-    "esbuild": "^0.28.0",
     "prettier": "^3.8.4",
     "prettier-plugin-svelte": "^4.1.1",
     "svelte": "^5.55.5",

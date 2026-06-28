@@ -1,5 +1,5 @@
-use crate::{db::Database, error::Result};
 use crate::queue::task::{DownloadTask, Priority, TaskState};
+use crate::{db::Database, error::Result};
 use chrono::Utc;
 
 /// Промежуточная структура для загрузки задачи из БД
@@ -24,7 +24,11 @@ pub struct SavedTask {
     pub trim_start: Option<i64>,
     pub trim_end: Option<i64>,
     pub is_playlist: i64,
+    // зарезервировано для будущих плейлистов
+    #[allow(dead_code)]
     pub playlist_id: Option<String>,
+    // зарезервировано для будущих плейлистов
+    #[allow(dead_code)]
     pub playlist_index: Option<i64>,
     pub state: String,
     pub priority: i64,
@@ -32,24 +36,28 @@ pub struct SavedTask {
     pub error: Option<String>,
     pub file_path: Option<String>,
     pub file_size: Option<i64>,
+    // зарезервировано для отложенного запуска
+    #[allow(dead_code)]
     pub schedule_at: Option<i64>,
     pub created_at: i64,
+    // зарезервировано для отслеживания изменений
+    #[allow(dead_code)]
     pub updated_at: i64,
 }
 
 impl From<SavedTask> for DownloadTask {
     fn from(s: SavedTask) -> Self {
+        let was_interrupted = matches!(s.state.as_str(), "downloading" | "converting");
         let state = match s.state.as_str() {
-            "waiting"     => TaskState::Waiting,
-            "downloading" => TaskState::Downloading,
-            "converting"  => TaskState::Converting,
-            "paused"      => TaskState::Paused,
-            "scheduled"   => TaskState::Scheduled,
-            "fetching"    => TaskState::Fetching,
-            "completed"   => TaskState::Completed,
-            "failed"      => TaskState::Failed,
-            "cancelled"   => TaskState::Cancelled,
-            _             => TaskState::Waiting,
+            "waiting" => TaskState::Waiting,
+            // при краше во время загрузки — помечаем Failed, пусть пользователь решает повторить
+            "downloading" | "converting" => TaskState::Failed,
+            "completed" => TaskState::Completed,
+            "failed" => TaskState::Failed,
+            "cancelled" => TaskState::Cancelled,
+            // устаревшие состояния из старых версий БД — трактуем как Waiting
+            "paused" | "scheduled" | "fetching" | "queued" => TaskState::Waiting,
+            _ => TaskState::Waiting,
         };
         let priority = match s.priority {
             0 => Priority::Low,
@@ -69,8 +77,8 @@ impl From<SavedTask> for DownloadTask {
             format: s.format,
             quality: s.quality,
             container: s.container,
-            fps: s.fps.map(|v| v as u32),
-            bitrate: s.bitrate.map(|v| v as u32),
+            fps: s.fps.map(|v| u32::try_from(v).unwrap_or(0)),
+            bitrate: s.bitrate.map(|v| u32::try_from(v).unwrap_or(0)),
             audio_codec: s.audio_codec,
             video_codec: s.video_codec,
             trim_start: s.trim_start,
@@ -81,7 +89,11 @@ impl From<SavedTask> for DownloadTask {
             progress: s.progress as f32,
             speed: None,
             eta: None,
-            error: s.error,
+            error: if was_interrupted && s.error.is_none() {
+                Some("прервано при предыдущем запуске".into())
+            } else {
+                s.error
+            },
             file_path: s.file_path,
             file_size: s.file_size,
             // chrono::DateTime из unix-секунд; unwrap_or на случай переполнения
@@ -93,59 +105,55 @@ impl From<SavedTask> for DownloadTask {
 
 impl Database {
     pub async fn save_task(&self, task: &DownloadTask) -> Result<()> {
-        let state = serde_json::to_value(&task.state)
-            .ok()
-            .and_then(|v| v.as_str().map(|s| s.to_owned()))
-            .unwrap_or_else(|| "waiting".to_owned());
+        let state = task.state.to_string();
         let priority = task.priority.clone() as i64;
         let now = Utc::now().timestamp();
+        // INSERT с сохранением created_at при повторном вызове (ON CONFLICT → UPDATE)
         sqlx::query(
-            "INSERT OR REPLACE INTO tasks
+            "INSERT INTO tasks
              (id, url, video_id, platform, title, channel, channel_id, thumbnail, duration,
               format, quality, container, fps, bitrate, audio_codec, video_codec,
               trim_start, trim_end, is_playlist, playlist_id, playlist_index,
               state, priority, progress, error, file_path, file_size, schedule_at,
               created_at, updated_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(id) DO UPDATE SET
+              state=excluded.state, priority=excluded.priority, progress=excluded.progress,
+              error=excluded.error, file_path=excluded.file_path, file_size=excluded.file_size,
+              updated_at=excluded.updated_at",
         )
-        .bind(&task.id).bind(&task.url).bind(&task.video_id).bind(&task.platform)
-        .bind(&task.title).bind(&task.channel).bind(&task.channel_id).bind(&task.thumbnail)
-        .bind(task.duration).bind(&task.format).bind(&task.quality).bind(&task.container)
-        .bind(task.fps.map(|v| v as i64)).bind(task.bitrate.map(|v| v as i64))
-        .bind(&task.audio_codec).bind(&task.video_codec)
-        .bind(task.trim_start).bind(task.trim_end)
-        .bind(task.is_playlist as i64).bind(Option::<String>::None).bind(Option::<i64>::None)
-        .bind(&state).bind(priority).bind(task.progress as f64)
-        .bind(&task.error).bind(&task.file_path).bind(task.file_size)
+        .bind(&task.id)
+        .bind(&task.url)
+        .bind(&task.video_id)
+        .bind(&task.platform)
+        .bind(&task.title)
+        .bind(&task.channel)
+        .bind(&task.channel_id)
+        .bind(&task.thumbnail)
+        .bind(task.duration)
+        .bind(&task.format)
+        .bind(&task.quality)
+        .bind(&task.container)
+        .bind(task.fps.map(|v| v as i64))
+        .bind(task.bitrate.map(|v| v as i64))
+        .bind(&task.audio_codec)
+        .bind(&task.video_codec)
+        .bind(task.trim_start)
+        .bind(task.trim_end)
+        .bind(task.is_playlist as i64)
+        .bind(Option::<String>::None)
         .bind(Option::<i64>::None)
-        .bind(task.created_at.timestamp()).bind(now)
+        .bind(&state)
+        .bind(priority)
+        .bind(task.progress as f64)
+        .bind(&task.error)
+        .bind(&task.file_path)
+        .bind(task.file_size)
+        .bind(Option::<i64>::None)
+        .bind(task.created_at.timestamp())
+        .bind(now)
         .execute(&self.pool)
         .await?;
-        Ok(())
-    }
-
-    pub async fn update_task_state(
-        &self,
-        id: &str,
-        state: &str,
-        progress: f32,
-        speed: Option<&str>,
-        eta: Option<&str>,
-        error: Option<&str>,
-        file_path: Option<&str>,
-        file_size: Option<i64>,
-    ) -> Result<()> {
-        let now = Utc::now().timestamp();
-        sqlx::query(
-            "UPDATE tasks SET state=?, progress=?, error=?, file_path=?, file_size=?,
-             updated_at=? WHERE id=?",
-        )
-        .bind(state).bind(progress as f64).bind(error).bind(file_path).bind(file_size)
-        .bind(now).bind(id)
-        .execute(&self.pool)
-        .await?;
-        // speed и eta — эфемерные данные, в БД не храним (только в памяти)
-        let _ = (speed, eta);
         Ok(())
     }
 
@@ -156,8 +164,8 @@ impl Database {
              trim_start, trim_end, is_playlist, playlist_id, playlist_index,
              state, priority, progress, error, file_path, file_size, schedule_at,
              created_at, updated_at
-             FROM tasks WHERE state IN ('waiting', 'paused')
-             ORDER BY priority DESC, created_at ASC"
+             FROM tasks WHERE state IN ('waiting', 'paused', 'downloading', 'converting')
+             ORDER BY priority DESC, created_at ASC",
         )
         .fetch_all(&self.pool)
         .await?;

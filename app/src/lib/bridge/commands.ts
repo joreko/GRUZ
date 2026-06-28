@@ -1,7 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { VideoInfo, DownloadTask, HistoryItem, Settings, StartDownloadRequest, ChannelPrefs, Session } from './types'
+import { openUrl as pluginOpenUrl } from '@tauri-apps/plugin-opener'
+import { writeText as pluginWriteText } from '@tauri-apps/plugin-clipboard-manager'
+import { open as pluginOpen } from '@tauri-apps/plugin-dialog'
+import type { VideoInfo, DownloadTask, HistoryItem, Settings, StartDownloadRequest, ChannelPrefs, Session, Priority } from './types'
 
-// Единственное место в коде где живёт invoke()
+// Единственное место в коде где живёт invoke() и плагин-вызовы
 
 export const commands = {
   fetchInfo: (url: string) =>
@@ -19,14 +22,17 @@ export const commands = {
   removeTask: (taskId: string) =>
     invoke<void>('remove_task', { taskId }),
 
-  setTaskPriority: (taskId: string, priority: string) =>
+  clearQueue: () =>
+    invoke<void>('clear_queue'),
+
+  setTaskPriority: (taskId: string, priority: Priority) =>
     invoke<void>('set_task_priority', { taskId, priority }),
+
+  reorderTask: (taskId: string, newIndex: number) =>
+    invoke<void>('reorder_task', { taskId, newIndex }),
 
   getHistory: (limit = 50, offset = 0, query?: string) =>
     invoke<HistoryItem[]>('get_history', { limit, offset, query }),
-
-  searchHistory: (query: string, limit = 50, offset = 0) =>
-    invoke<HistoryItem[]>('search_history', { query, limit, offset }),
 
   deleteHistoryItem: (id: string) =>
     invoke<void>('delete_history_item', { id }),
@@ -47,7 +53,7 @@ export const commands = {
     invoke<void>('update_settings', { key, value }),
 
   getFreeSpace: (path: string) =>
-    invoke<number>('get_free_space', { path }),
+    invoke<number | null>('get_free_space', { path }),
 
   // Настройки каналов
   listChannelPrefs: () =>
@@ -72,4 +78,14 @@ export const commands = {
   // Поддержка
   uploadLog: () =>
     invoke<string>('upload_log'),
+
+  // Плагины (bridge: не импортировать plugin-* в компонентах)
+  openUrl: (url: string) =>
+    pluginOpenUrl(url),
+
+  writeText: (text: string) =>
+    pluginWriteText(text),
+
+  pickDirectory: (defaultPath?: string) =>
+    pluginOpen({ directory: true, multiple: false, defaultPath }),
 }

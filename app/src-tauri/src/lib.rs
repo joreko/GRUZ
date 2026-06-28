@@ -6,7 +6,10 @@ mod orchestrator;
 mod queue;
 mod ytdlp;
 
-use commands::{channel_prefs as channel_prefs_cmds, download, history, queue as queue_cmds, session as session_cmds, settings, support as support_cmds, update as update_cmds};
+use commands::{
+    channel_prefs as channel_prefs_cmds, download, history, queue as queue_cmds,
+    session as session_cmds, settings, support as support_cmds, update as update_cmds,
+};
 use orchestrator::{Orchestrator, OrchestratorHandle};
 use std::sync::Arc;
 use tauri::Manager;
@@ -25,11 +28,7 @@ pub fn run() {
     if let Ok(entries) = std::fs::read_dir(&log_dir) {
         let mut files: Vec<_> = entries
             .flatten()
-            .filter(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .starts_with("gruz_")
-            })
+            .filter(|e| e.file_name().to_string_lossy().starts_with("gruz_"))
             .collect();
         files.sort_by_key(|e| e.file_name());
         if files.len() > 20 {
@@ -44,12 +43,23 @@ pub fn run() {
         "gruz_{}.log",
         chrono::Local::now().format("%Y-%m-%d_%H%M%S")
     );
-    let log_file = std::fs::File::create(log_dir.join(&log_name))
-        .expect("не удалось создать файл лога");
-    let (non_blocking, guard) = tracing_appender::non_blocking(log_file);
+    let (non_blocking, guard) = match std::fs::File::create(log_dir.join(&log_name)) {
+        Ok(f) => {
+            let (nb, g) = tracing_appender::non_blocking(f);
+            (nb, Some(g))
+        }
+        Err(e) => {
+            eprintln!("не удалось создать файл лога: {e}; логирование только в stderr");
+            let (nb, _g) = tracing_appender::non_blocking(std::io::stderr());
+            (nb, None)
+        }
+    };
 
-    let filter = EnvFilter::from_default_env()
-        .add_directive("gruz=debug".parse().unwrap());
+    let filter = EnvFilter::from_default_env().add_directive(
+        "gruz=debug"
+            .parse()
+            .expect("фильтр лога: статическая строка 'gruz=debug' всегда валидна"),
+    );
 
     // Слой файла — подробный с target и thread id
     let file_layer = fmt::layer()
@@ -66,14 +76,12 @@ pub fn run() {
         .with(fmt::layer().with_target(false).with_thread_ids(false));
 
     #[cfg(not(debug_assertions))]
-    let registry = tracing_subscriber::registry()
-        .with(filter)
-        .with(file_layer);
+    let registry = tracing_subscriber::registry().with(filter).with(file_layer);
 
     registry.init();
 
-    // guard должен жить до конца процесса — flush при завершении
-    std::mem::forget(guard);
+    // guard должен жить до конца функции run() — Drop вызывает flush буфера
+    let _guard = guard;
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -87,7 +95,9 @@ pub fn run() {
             tauri::async_runtime::block_on(async {
                 let mut db = db::Database::connect().await?;
                 db.migrate().await?;
-                let orchestrator = Orchestrator::new(db, handle).await?;
+                let mut orchestrator = Orchestrator::new(db, handle).await?;
+                // Запускаем задачи восстановленные из БД
+                orchestrator.start().await;
                 let orch_arc: OrchestratorHandle = Arc::new(Mutex::new(orchestrator));
                 // Фоновый task: после завершения воркера запускает tick()
                 let orch_tick = Arc::clone(&orch_arc);
@@ -110,6 +120,7 @@ pub fn run() {
             queue_cmds::get_queue,
             queue_cmds::reorder_task,
             queue_cmds::remove_task,
+            queue_cmds::clear_queue,
             queue_cmds::set_task_priority,
             history::get_history,
             history::delete_history_item,

@@ -1,4 +1,7 @@
-use crate::{downloader::VideoInfo, error::Result, orchestrator::Orchestrator, queue::task::DownloadTask};
+use crate::downloader::{process, VideoInfo};
+use crate::error::Result;
+use crate::orchestrator::Orchestrator;
+use crate::queue::task::DownloadTask;
 use std::sync::Arc;
 use tauri::State;
 use tokio::sync::Mutex;
@@ -25,7 +28,16 @@ pub async fn fetch_info(
     url: String,
     orchestrator: State<'_, Arc<Mutex<Orchestrator>>>,
 ) -> Result<VideoInfo> {
-    orchestrator.lock().await.fetch_info(url).await
+    // Фаза 1: быстро читаем настройки под блокировкой (proxy + ytdlp path)
+    let (proxy, ytdlp) = {
+        let orch = orchestrator.lock().await;
+        orch.fetch_info_prepare().await
+    };
+    // Фаза 2: yt-dlp без блокировки оркестратора (может длиться 10+ секунд)
+    let result = process::fetch_info(&ytdlp, &url, proxy.as_deref()).await;
+    // Сброс idle-таймера после завершения
+    orchestrator.lock().await.reset_idle();
+    result
 }
 
 #[tauri::command]
@@ -36,7 +48,21 @@ pub async fn start_download(
     orchestrator
         .lock()
         .await
-        .enqueue(req.url, req.format, req.quality, req.container, req.fps, req.bitrate, req.title, req.thumbnail, req.channel, req.duration, req.is_playlist, req.audio_codec, req.video_codec)
+        .enqueue(
+            req.url,
+            req.format,
+            req.quality,
+            req.container,
+            req.fps,
+            req.bitrate,
+            req.title,
+            req.thumbnail,
+            req.channel,
+            req.duration,
+            req.is_playlist,
+            req.audio_codec,
+            req.video_codec,
+        )
         .await
 }
 

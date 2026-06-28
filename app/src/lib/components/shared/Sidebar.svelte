@@ -1,5 +1,6 @@
 <script lang="ts">
   import { queue } from '$lib/stores/queue.svelte'
+  import { tooltip } from '$lib/utils/tooltip'
   import type { Route } from '$lib/bridge/types'
   let { route = $bindable<Route>('download') } = $props()
 
@@ -10,7 +11,7 @@
   ]
 
   const activeDownloads = $derived(
-    queue.tasks.filter(t => t.state === 'downloading' || t.state === 'waiting' || t.state === 'fetching')
+    queue.tasks.filter(t => t.state === 'downloading' || t.state === 'waiting' || t.state === 'converting')
   )
 </script>
 
@@ -21,7 +22,7 @@
       <button
         class="nav-btn"
         class:active={route === item.id}
-        data-tooltip={item.label}
+        use:tooltip={{ text: item.label, placement: 'right' }}
         onclick={() => route = item.id}
         aria-label={item.label}
         aria-current={route === item.id ? 'page' : undefined}
@@ -40,10 +41,6 @@
           {#if activeDownloads.length > 0}
             <span class="badge">{activeDownloads.length}</span>
           {/if}
-        {:else if item.id === 'save-settings'}
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-          </svg>
         {:else if item.id === 'settings'}
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"/>
@@ -86,20 +83,20 @@
     place-items: center;
     background: none;
     border: none;
-    border-radius: 12px;
-    color: #6b6b6b;
+    border-radius: var(--radius-lg);
+    color: var(--text-muted);
     cursor: pointer;
-    transition: background 0.2s, color 0.2s, transform 0.1s;
+    transition: background var(--transition-default), color var(--transition-default), transform 0.1s;
     flex-shrink: 0;
   }
   .nav-btn svg {
     width: 18px;
     height: 18px;
-    transition: transform 0.2s, color 0.2s;
+    transition: transform var(--transition-default), color var(--transition-default);
   }
   .nav-btn:hover {
     background: rgba(0,0,0,0.3);
-    color: #fafafa;
+    color: var(--text-primary);
   }
   .nav-btn:hover svg { transform: scale(1.1); }
   .nav-btn:active { transform: scale(0.93); }
@@ -109,36 +106,6 @@
   }
   .nav-btn.active svg { color: var(--accent); }
 
-  /* Tooltip */
-  .nav-btn::after {
-    content: attr(data-tooltip);
-    position: absolute;
-    left: calc(100% + 10px);
-    top: 50%;
-    transform: translateY(-50%) translateX(-4px);
-    background: rgba(28,28,28,0.96);
-    backdrop-filter: blur(12px);
-    color: #fafafa;
-    padding: 5px 10px;
-    border-radius: 6px;
-    font-size: 11px;
-    font-weight: 500;
-    white-space: nowrap;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.15s, transform 0.15s;
-    border: 1px solid rgba(255,255,255,0.06);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-    z-index: 200;
-    max-width: 220px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .nav-btn:hover::after {
-    opacity: 1;
-    transform: translateY(-50%) translateX(0);
-  }
-
   /* Badge */
   .badge {
     position: absolute;
@@ -147,7 +114,7 @@
     min-width: 14px;
     height: 14px;
     background: var(--accent);
-    color: #fff;
+    color: var(--text-primary);
     font-size: 9px;
     font-weight: 700;
     border-radius: 9999px;
@@ -158,8 +125,4 @@
     pointer-events: none;
   }
 
-  /* Скроллбар */
-  ::-webkit-scrollbar { width: 4px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
-</style>
+  /* Скроллбар */</style>

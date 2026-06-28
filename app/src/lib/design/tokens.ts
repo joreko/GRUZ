@@ -59,6 +59,7 @@ export const space = {
   5: '20px',
   6: '24px',
   8: '32px',
+  9: '36px',
   10: '40px',
   12: '48px',
 } as const
@@ -66,8 +67,11 @@ export const space = {
 export const radius = {
   sm: '4px',
   md: '8px',
+  card: '10px',
   lg: '12px',
+  panel: '14px',
   xl: '16px',
+  '2xl': '48px',
   full: '9999px',
 } as const
 

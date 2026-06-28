@@ -1,6 +1,7 @@
 ﻿<script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window'
   import { getVersion } from '@tauri-apps/api/app'
+  import { tooltip } from '$lib/utils/tooltip'
 
   import { onMount, onDestroy } from 'svelte'
   import { onOrchestratorThought, type OrchestratorThought } from '$lib/bridge/events'
@@ -124,9 +125,13 @@
 
     registerThoughtCallback(enqueue)
     unlisten = await onOrchestratorThought(enqueue)
-    cursorTimer = setInterval(() => {
-      if (!isAnimating) showCursor = !showCursor
-    }, 530)
+    const prefersReducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (!prefersReducedMotion) {
+      cursorTimer = setInterval(() => {
+        if (current && !isAnimating) showCursor = !showCursor
+        else if (!current) showCursor = false
+      }, 530)
+    }
     enqueue({ text: 'привет, я Груз.', color: 'success', priority: 0 })
   })
   onDestroy(() => {
@@ -142,6 +147,7 @@
     class="version-btn"
     class:has-changes={newChangesCount > 0}
     onclick={handleUpdateClick}
+    use:tooltip={{ text: 'Обновления', placement: 'bottom' }}
   >
     <span class="version-text">{newChangesCount > 0 ? `v${displayVersion(version)} (+${newChangesCount})` : `v${displayVersion(version)}`}</span>
   </button>
@@ -166,7 +172,6 @@
     background: transparent;
     flex-shrink: 0;
     user-select: none;
-    overflow: hidden;
   }
 
   .middle-bar {
@@ -179,7 +184,7 @@
       inset 0 1px 0 rgba(180,180,180,0.18),
       inset 1px 0 0 rgba(150,150,150,0.07),
       inset -1px 0 0 rgba(0,0,0,0.15);
-    border-radius: 6px 6px 0 0;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -200,7 +205,7 @@
     font-weight: 500;
     pointer-events: none;
     flex-shrink: 0;
-    transition: color 0.3s;
+    transition: color var(--transition-slow);
     padding: 0 8px;
   }
 
@@ -213,13 +218,13 @@
     width: 190px;
     height: 12px;
     flex-shrink: 0;
-    border-radius: 48px 6px 0 0;
+    border-radius: 48px var(--radius-sm) 0 0;
     background: rgba(255,255,255,0.055);
     box-shadow:
       inset 0 1px 0 rgba(180,180,180,0.18),
       inset 1px 0 0 rgba(0,0,0,0.15),
       inset -1px 0 0 rgba(150,150,150,0.07);
-    transition: height 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.15s;
+    transition: height var(--transition-default) cubic-bezier(0.34, 1.56, 0.64, 1), background var(--transition-fast);
     cursor: default;
     display: flex;
     align-items: center;
@@ -238,11 +243,12 @@
     color: rgba(255,255,255,0.35);
     letter-spacing: 0.06em;
     opacity: 0;
-    transition: opacity 0.15s;
+    transition: opacity var(--transition-fast);
     pointer-events: none;
     user-select: none;
     white-space: nowrap;
   }
+  .version-btn.has-changes { height: 24px; }
   .version-btn.has-changes .version-text { color: var(--thought-info); }
   .version-btn:hover .version-text,
   .version-btn.has-changes .version-text { opacity: 1; }
@@ -268,14 +274,14 @@
       inset 0 1px 0 rgba(180,180,180,0.18),
       inset 1px 0 0 rgba(150,150,150,0.07),
       inset -1px 0 0 rgba(0,0,0,0.15);
-    transition: background 0.15s, box-shadow 0.15s;
-    border-radius: 6px 6px 0 0;
+    transition: background var(--transition-fast), box-shadow var(--transition-fast);
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   }
 
   .btn-close {
     width: 72px;
-    border-radius: 6px 48px 0 0;
-    background: rgba(255,61,61,0.6);
+    border-radius: var(--radius-sm) 48px 0 0;
+    background: color-mix(in srgb, var(--accent) 60%, transparent);
     box-shadow:
       inset 0 1px 0 rgba(255,140,140,0.35),
       inset 1px 0 0 rgba(255,80,80,0.18),
@@ -283,7 +289,7 @@
   }
 
   .btn-close:hover {
-    background: rgba(255,61,61,0.82);
+    background: color-mix(in srgb, var(--accent) 82%, transparent);
     box-shadow:
       inset 0 1px 0 rgba(255,150,150,0.35),
       inset 1px 0 0 rgba(255,80,80,0.18),
@@ -303,4 +309,7 @@
   }
 
 
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+}
 </style>

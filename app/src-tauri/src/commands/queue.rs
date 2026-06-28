@@ -23,20 +23,32 @@ pub async fn remove_task(
 }
 
 #[tauri::command]
+pub async fn clear_queue(orchestrator: State<'_, Arc<Mutex<Orchestrator>>>) -> Result<()> {
+    orchestrator.lock().await.clear_queue().await
+}
+
+#[tauri::command]
 pub async fn set_task_priority(
     task_id: String,
     priority: Priority,
     orchestrator: State<'_, Arc<Mutex<Orchestrator>>>,
 ) -> Result<()> {
-    orchestrator.lock().await.set_priority(&task_id, priority).await
+    orchestrator
+        .lock()
+        .await
+        .set_priority(&task_id, priority)
+        .await
 }
 
 #[tauri::command]
 pub async fn reorder_task(
-    _task_id: String,
-    _new_index: usize,
-    _orchestrator: State<'_, Arc<Mutex<Orchestrator>>>,
+    task_id: String,
+    new_index: usize,
+    orchestrator: State<'_, Arc<Mutex<Orchestrator>>>,
 ) -> Result<()> {
-    // TODO: ручная перестановка задач
-    Ok(())
+    orchestrator
+        .lock()
+        .await
+        .reorder_task(&task_id, new_index)
+        .await
 }
