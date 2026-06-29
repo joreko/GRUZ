@@ -13,6 +13,13 @@
   import SettingsPage from '$lib/components/settings/SettingsPage.svelte'
   import SaveSettingsPage from '$lib/components/save-settings/SaveSettingsPage.svelte'
   import UpdatesPage from '$lib/components/updates/UpdatesPage.svelte'
+  import EditorPage from '$lib/components/editor/EditorPage.svelte'
+  import StoragePage from '$lib/components/storage/StoragePage.svelte'
+  import QueuePageStub from '$lib/components/queue-page/QueuePageStub.svelte'
+  import SchedulerPage from '$lib/components/scheduler/SchedulerPage.svelte'
+  import ChannelsPage from '$lib/components/channels/ChannelsPage.svelte'
+  import OrchestratorPage from '$lib/components/orchestrator/OrchestratorPage.svelte'
+  import GraphPage from '$lib/components/graph/GraphPage.svelte'
   import QueueColumn from '$lib/components/shared/QueueColumn.svelte'
   import { commands } from '$lib/bridge/commands'
 
@@ -79,6 +86,22 @@
             <SaveSettingsPage />
           {:else if route === 'updates'}
             <UpdatesPage />
+          {:else if route === 'editor'}
+            <EditorPage />
+          {:else if route === 'storage'}
+            <StoragePage />
+          {:else if route === 'history'}
+            <HistoryPage />
+          {:else if route === 'queue-page'}
+            <QueuePageStub />
+          {:else if route === 'scheduler'}
+            <SchedulerPage />
+          {:else if route === 'channels'}
+            <ChannelsPage />
+          {:else if route === 'orchestrator'}
+            <OrchestratorPage />
+          {:else if route === 'graph'}
+            <GraphPage />
           {/if}
         </div>
       {/key}

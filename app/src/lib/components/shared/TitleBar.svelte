@@ -151,11 +151,14 @@
   >
     <span class="version-text">{newChangesCount > 0 ? `v${displayVersion(version)} (+${newChangesCount})` : `v${displayVersion(version)}`}</span>
   </button>
-  <div class="middle-bar" data-tauri-drag-region>
+  <button class="middle-bar"
+    onclick={() => route = 'orchestrator'}
+    use:tooltip={{ text: 'Оркестратор', placement: 'bottom' }}
+  >
     <span class="dash" style="color:{displayColor}">——</span>
     <span class="thought" style="color:{displayColor}">{displayText}{#if showCursor}<span class="cursor">▌</span>{/if}</span>
     <span class="dash" style="color:{displayColor}">——</span>
-  </div>
+  </button>
   <div class="controls">
     <button class="btn btn-minimize" onclick={() => win.minimize()} aria-label="Свернуть"></button>
     <button class="btn btn-maximize" onclick={() => win.toggleMaximize()} aria-label="Развернуть"></button>
@@ -190,7 +193,11 @@
     justify-content: center;
     padding: 0 12px;
     overflow: hidden;
+    border: none;
+    cursor: pointer;
+    transition: background 150ms ease;
   }
+  .middle-bar:hover { background: rgba(255,255,255,0.09); }
 
   .thought {
     font-size: 11px;

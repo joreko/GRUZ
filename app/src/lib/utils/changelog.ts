@@ -4,7 +4,10 @@ export const REPO = 'joreko/GRUZ'
 const API = `https://api.github.com/repos/${REPO}`
 
 // Пользовательские типы — показываются в changelog и считаются в (+N)
-const USER_TYPES = new Set(['добавлено', 'исправлено', 'улучшено', 'быстрее'])
+const USER_TYPES = new Set(['добавлено', 'исправлено', 'улучшено', 'быстрее', 'удалено'])
+
+// Технические scope — идут в techLines независимо от типа коммита
+const TECH_SCOPES = new Set(['ci', 'deps', 'tauri', 'bridge', 'installer', 'stores', 'docs', 'test', 'refact'])
 
 export interface CommitLine {
   type: string       // тип коммита (добавлено, исправлено, ...)
@@ -23,9 +26,10 @@ export interface ReleaseChangelog {
   name: string
   publishedAt: string
   prerelease: boolean
+  description: string        // body релиза из GitHub
   commits: ParsedCommit[]
-  totalUserLines: number  // сумма пользовательских строк — для (+N)
-  latestCounter: number   // максимальный счётчик в релизе (включая технические коммиты)
+  totalUserLines: number
+  latestCounter: number
 }
 
 // Версия в tauri.conf.json: "0.0.104" — patch это счётчик коммита.
@@ -71,8 +75,8 @@ function parseCommitMessage(message: string): { counter: number; lines: CommitLi
     const m = line.match(/^([а-яёА-ЯЁ]+)(?:\(([^)]+)\))?:\s*(.+)$/)
     if (!m) continue
     const [, type, scope = '', text] = m
-    if (USER_TYPES.has(type)) userLines.push({ type, scope, text })
-    else techLines.push({ type, scope, text })
+    if (USER_TYPES.has(type) && !TECH_SCOPES.has(scope)) userLines.push({ type, scope, text })
+    else if (type !== 'описание') techLines.push({ type, scope, text })
   }
 
   return { counter, lines: userLines, techLines }
@@ -81,6 +85,7 @@ function parseCommitMessage(message: string): { counter: number; lines: CommitLi
 interface GithubRelease {
   tag_name: string
   name: string
+  body: string
   published_at: string
   prerelease: boolean
 }
@@ -186,8 +191,9 @@ async function fetchChangelogUncached(): Promise<ReleaseChangelog[]> {
       name: rel.name || rel.tag_name,
       publishedAt: rel.published_at,
       prerelease: rel.prerelease,
+      description: rel.body || '',
       commits,
-      totalUserLines: commits.reduce((s, c) => s + c.lines.length, 0),
+      totalUserLines: commits.reduce((s, c) => s + c.lines.length + c.techLines.length, 0),
       latestCounter,
     }
   })
@@ -200,7 +206,7 @@ export function countNewChanges(changelogs: ReleaseChangelog[], currentCounter: 
   let total = 0
   for (const rel of changelogs) {
     for (const commit of rel.commits) {
-      if (commit.counter > currentCounter) total += commit.lines.length
+      if (commit.counter > currentCounter) total += commit.lines.length + commit.techLines.length
     }
   }
   return total
