@@ -1,6 +1,6 @@
 // Типы, зеркалящие Rust-структуры. Обновлять синхронно с src-tauri/src/
 
-export type Route = 'download' | 'gallery' | 'settings' | 'save-settings' | 'updates'
+export type Route = 'download' | 'gallery' | 'history' | 'settings' | 'save-settings' | 'updates' | 'editor' | 'storage' | 'queue-page' | 'scheduler' | 'channels' | 'orchestrator' | 'graph'
 
 export type TaskState =
   | 'waiting' | 'downloading' | 'converting'

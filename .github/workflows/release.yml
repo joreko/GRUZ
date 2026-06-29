@@ -57,6 +57,7 @@ jobs:
         run: |
           $userTypes = @('добавлено', 'исправлено', 'улучшено', 'быстрее')
           $lines = @()
+          $description = ""
 
           # Предыдущий тег — второй в списке по убыванию версии
           $tags = git tag --sort=-version:refname 2>$null
@@ -68,7 +69,9 @@ jobs:
               foreach ($line in ($msg -split "`n")) {
                 $line = $line.Trim()
                 if (-not $line) { continue }
-                if ($line -match '^(\S+?)(?:\([^)]+\))?:\s+(.+)$') {
+                if (-not $description -and $line -match '^описание:\s+(.+)$') {
+                  $description = $Matches[1]
+                } elseif ($line -match '^(\S+?)(?:\([^)]+\))?:\s+(.+)$') {
                   if ($userTypes -contains $Matches[1]) { $lines += "— " + $Matches[2] }
                 }
               }
@@ -80,8 +83,11 @@ jobs:
           Add-Content $env:GITHUB_ENV "GRUZ_CHANGELOG<<$d"
           if ($changelog) { Add-Content $env:GITHUB_ENV $changelog }
           Add-Content $env:GITHUB_ENV $d
-          # Сохраняем для body релиза
-          $body = if ($changelog) { $changelog } else { "Технические улучшения и исправления." }
+          # Сохраняем для body релиза: сначала описание, потом changelog
+          $bodyParts = @()
+          if ($description) { $bodyParts += $description }
+          if ($changelog)    { $bodyParts += $changelog }
+          $body = if ($bodyParts.Count -gt 0) { $bodyParts -join "`n`n" } else { "Технические улучшения и исправления." }
           $d2 = "EOF_BODY"
           Add-Content $env:GITHUB_ENV "RELEASE_BODY<<$d2"
           Add-Content $env:GITHUB_ENV $body

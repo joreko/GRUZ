@@ -148,6 +148,15 @@ impl Orchestrator {
         audio_codec: Option<String>,
         video_codec: Option<String>,
     ) -> Result<DownloadTask> {
+        // Bitrate domain validation
+        if let Some(br) = bitrate {
+            if br > 0 && br > 320000 {
+                return Err(AppError::Validation(format!(
+                    "Bitrate cannot exceed {} kbps",
+                    320000
+                )));
+            }
+        }
         // Валидация URL
         if url.starts_with('-') || url.is_empty() {
             return Err(AppError::Validation("Некорректный URL".into()));
@@ -655,16 +664,20 @@ async fn run_download(
             } else {
                 "bestaudio/best".to_string()
             };
-            (
-                audio_fmt,
-                vec![
-                    "--extract-audio".to_string(),
-                    "--audio-format".to_string(),
-                    ext.to_string(),
-                    "--audio-quality".to_string(),
-                    "0".to_string(),
-                ],
-            )
+            let mut post = vec![
+                "--extract-audio".to_string(),
+                "--audio-format".to_string(),
+                ext.to_string(),
+            ];
+            if let Some(br) = task.bitrate.filter(|b| *b > 0) {
+                post.extend_from_slice(&[
+                    "--postprocessor-args".to_string(),
+                    format!("ffmpeg:-b:a {}k", br),
+                ]);
+            } else {
+                post.extend_from_slice(&["--audio-quality".to_string(), "0".to_string()]);
+            }
+            (audio_fmt, post)
         }
         "video_only" => {
             let sel = format!("bestvideo{}{}/bestvideo", task.quality, fps_filter);
@@ -815,8 +828,9 @@ async fn run_download(
 
             // Без явного перекодирования: форсируем -c copy чтобы ffmpeg не пытался
             // конвертировать несовместимые потоки (VP9 в mp4 без -c copy → Conversion failed!)
+            // Если задан битрейт — нужно перекодировать, иначе -b:v игнорируется при copy
             let copy_args = if let Some(br) = task.bitrate.filter(|b| *b > 0) {
-                format!("ffmpeg:-c:v copy -b:v {}k -c:a copy", br)
+                format!("ffmpeg:-c:v libx264 -b:v {}k -c:a copy", br)
             } else {
                 "ffmpeg:-c copy".to_string()
             };

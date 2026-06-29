@@ -22,7 +22,7 @@
   let confirmTag = $state<string | null>(null)   // tag ожидающий подтверждения
   let progress = $state<UpdateProgress | null>(null)
   let installError = $state('')                   // ошибка скачивания/установки
-  let showBeta = $state(false)
+  let filter = $state<'stable' | 'beta' | null>(null)
   let showTechLines = $state(false)
 
   let unlistenProgress: (() => void) | null = null
@@ -30,11 +30,13 @@
 
   // По умолчанию бета если нет стабильных
   $effect(() => {
-    if (!loading && releases.length > 0 && releases.every(r => r.prerelease)) showBeta = true
+    if (!loading && releases.length > 0 && releases.every(r => r.prerelease)) filter = 'beta'
   })
 
   const filteredReleases = $derived(
-    releases.filter(r => showBeta ? r.prerelease : !r.prerelease)
+    filter === 'stable' ? releases.filter(r => !r.prerelease)
+    : filter === 'beta'  ? releases.filter(r => r.prerelease)
+    : releases
   )
 
   // Счётчик текущей установленной версии (= patch = номер коммита)
@@ -107,9 +109,10 @@
   // Цвета и метки групп — иконки теперь inline SVG в шаблоне
   const typeColor: Record<string, string> = {
     добавлено:  'var(--thought-success)',
-    исправлено: 'var(--accent)',
+    исправлено: 'var(--accent-warm)',
     улучшено:   'var(--thought-info)',
     быстрее:    'var(--thought-warning)',
+    удалено:    'var(--accent)',
   }
 
   const typeLabel: Record<string, string> = {
@@ -117,6 +120,7 @@
     исправлено: 'Исправлено',
     улучшено:   'Улучшено',
     быстрее:    'Быстрее',
+    удалено:    'Удалено',
   }
 
   // Цвета и человеческие названия scope-бейджиков
@@ -181,7 +185,7 @@
     return scopeLabel[scope] ?? scope
   }
 
-  const TYPE_ORDER = ['добавлено', 'улучшено', 'быстрее', 'исправлено']
+  const TYPE_ORDER = ['добавлено', 'улучшено', 'быстрее', 'исправлено', 'удалено']
 
   const selectedGroups = $derived.by(() => {
     const map = new Map<string, typeof selectedLines>()
@@ -194,7 +198,7 @@
 
   // (+N) для релиза = пользовательские строки в коммитах новее текущей версии
   function countNew(rel: ReleaseChangelog): number {
-    return rel.commits.reduce((s, c) => c.counter > currentCounter ? s + c.lines.length : s, 0)
+    return rel.commits.reduce((s, c) => c.counter > currentCounter ? s + c.lines.length + c.techLines.length : s, 0)
   }
 
   // Строки выбранного релиза — пересчитываем только при смене selected/currentCounter
@@ -220,7 +224,10 @@
   const releasesWithNew = $derived(
     filteredReleases.map(rel => ({ rel, newCount: countNew(rel), kind: relKind(rel.tag) }))
   )
-  const newLinesCount = $derived(selectedLines.filter(l => l.isNew).length)
+  const newLinesCount = $derived(
+    selectedLines.filter(l => l.isNew).length +
+    (selected ? selected.commits.reduce((s, c) => c.counter > currentCounter ? s + c.techLines.length : s, 0) : 0)
+  )
 
   // Подпись прогресса скачивания
   const progressLabel = $derived.by(() => {
@@ -239,23 +246,22 @@
     {@const kind = relKind(selected.tag)}
     {@const ver = displayVersion(selected.tag.replace(/^v/, ''))}
     <div class="detail">
-
-      <button class="back" onclick={() => selected = null}>
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 3L5 8l5 5"/></svg>
-        Все версии
-      </button>
-
-      <div class="detail-body">
-
-        <!-- Левая колонка: мета -->
+      <div class="detail-sidebar">
+        <button class="back" onclick={() => selected = null}>
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 3L5 8l5 5"/></svg>
+          Все версии
+        </button>
         <aside class="detail-meta">
           <div class="meta-ver">v{ver}</div>
           <div class="meta-date">{formatDate(selected.publishedAt)}</div>
           <div class="meta-badges">
-            {#if selected.prerelease}<span class="badge beta">beta</span>{/if}
+            {#if selected.prerelease}<span class="badge beta">бета</span>{/if}
             {#if kind === 'current'}<span class="badge current">установлена</span>{/if}
             {#if newLinesCount > 0}<span class="badge new">+{newLinesCount} новых</span>{/if}
           </div>
+          {#if selected.description?.trim() && selected.description.trim() !== 'Технические улучшения и исправления.'}
+            <p class="meta-desc">{selected.description.trim()}</p>
+          {/if}
           {#if kind !== 'current'}
             <div class="meta-install">
               {#if installing === selected.tag}
@@ -282,13 +288,14 @@
             </div>
           {/if}
         </aside>
+      </div>
 
         <!-- Правая колонка: список изменений -->
-        <div class="detail-changes">
+      <div class="detail-changes">
           {#if selectedLines.length === 0}
             <p class="empty">Технические улучшения и исправления.</p>
           {:else}
-            {@const hiddenCount = selected.latestCounter - selected.totalUserLines}
+            {@const hiddenCount = selectedTechLines.length}
             <div class="groups">
               {#each selectedGroups as group, gi}
                 {@const offset = selectedGroups.slice(0, gi).reduce((s, g) => s + g.lines.length, 0)}
@@ -349,16 +356,16 @@
           {/if}
         </div>
 
-      </div>
     </div>
 
   {:else}
+    <div class="versions-scroll">
     <!-- Список релизов -->
     <div class="top-row">
       <h2>Обновления</h2>
       <div class="tabs">
-        <button class="tab" class:active={!showBeta} onclick={() => showBeta = false}>Стабильные</button>
-        <button class="tab" class:active={showBeta} onclick={() => showBeta = true}>Бета</button>
+        <button class="tab" class:active={filter === 'stable'} onclick={() => filter = filter === 'stable' ? null : 'stable'}>Стабильные</button>
+        <button class="tab" class:active={filter === 'beta'}   onclick={() => filter = filter === 'beta'   ? null : 'beta'  }>Бета</button>
       </div>
     </div>
 
@@ -380,73 +387,94 @@
           </button>
         </div>
       {/if}
-      <div class="grid" role="listbox" aria-label="Версии">
-        {#each releasesWithNew as { rel, newCount, kind }}
+      <div class="releases">
+        {#each releasesWithNew as { rel, newCount, kind }, i}
+          {@const isHero = i === 0}
           <div
             class="card"
+            class:card-hero={isHero}
             class:card-current={kind === 'current'}
             role="button"
             tabindex="0"
             onclick={() => selected = rel}
             onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (selected = rel)}
           >
-            <div class="card-top">
+            <div class="card-head">
               <span class="card-tag">v{displayVersion(rel.tag.replace(/^v/, ''))}</span>
-              {#if rel.prerelease}<span class="badge beta">beta</span>{/if}
-              {#if kind === 'current'}<span class="badge current">✓</span>{/if}
-              {#if kind === 'older'}<span class="badge old">старее</span>{/if}
-              {#if newCount > 0}<span class="badge new">+{newCount}</span>{/if}
+              {#if newCount > 0}<span class="card-new">+{newCount}</span>{/if}
+              <div class="card-badges">
+                {#if rel.prerelease}<span class="badge beta">бета</span>{/if}
+                {#if kind === 'current'}<span class="badge current">текущая</span>{/if}
+              </div>
             </div>
-            <p class="card-date">{formatDate(rel.publishedAt)}</p>
-            {#if rel.totalUserLines > 0}
+            <div class="card-meta">
+              <span class="card-date">{formatDate(rel.publishedAt)}</span>
+            </div>
+            {#if !isHero && rel.totalUserLines > 0}
               <p class="card-stat">{rel.totalUserLines} {pluralLines(rel.totalUserLines)}</p>
-            {:else}
-              <p class="card-stat">технические улучшения</p>
             {/if}
-
-            {#if kind !== 'current'}
-              {#if installing === rel.tag}
-                <!-- Прогресс скачивания -->
-                <div class="dl" onclick={(e) => e.stopPropagation()} role="presentation">
-                  <div class="dl-track"><div class="dl-fill" style="width:{progress?.pct ?? 5}%" class:indet={progress?.pct == null}></div></div>
-                  <span class="dl-label">{progressLabel}</span>
-                </div>
-              {:else if confirmTag === rel.tag}
-                <!-- Подтверждение -->
-                <div class="confirm" onclick={(e) => e.stopPropagation()} role="presentation">
-                  <span class="confirm-q">{kind === 'older' ? 'Откатиться на эту версию?' : 'Установить эту версию?'}</span>
-                  <div class="confirm-actions">
-                    <button class="confirm-yes" onclick={() => confirmInstall(rel.tag)}>да, {actionLabel(rel.tag)}</button>
-                    <button class="confirm-no" onclick={cancelConfirm}>отмена</button>
-                  </div>
-                </div>
-              {:else}
-                <button
-                  class="install-btn"
-                  class:rollback={kind === 'older'}
-                  disabled={installing !== null}
-                  onclick={(e) => { e.stopPropagation(); startInstall(rel.tag) }}
-                >
-                  {actionLabel(rel.tag)}
-                </button>
+            {#if isHero}
+              {@const allLines = rel.commits.flatMap(c => c.lines)}
+              {@const allTechLines = rel.commits.flatMap(c => c.techLines)}
+              {@const typeCounts = ['добавлено','исправлено','улучшено','быстрее','удалено'].map(t => ({ type: t, count: allLines.filter(l => l.type === t).length })).filter(x => x.count > 0)}
+              {@const techCount = allTechLines.length}
+              {@const desc = rel.description?.trim()}
+              {#if desc && desc !== 'Технические улучшения и исправления.'}
+                <p class="hero-desc">{desc}</p>
               {/if}
+              <div class="hero-body">
+                <div class="hero-left">
+                  <button
+                    class="hero-btn"
+                    disabled={installing !== null}
+                    onclick={(e) => { e.stopPropagation(); startInstall(rel.tag) }}
+                  >обновить до v{displayVersion(rel.tag.replace(/^v/, ''))}</button>
+                </div>
+                {#if typeCounts.length > 0}
+                  <div class="hero-stats">
+                    {#each typeCounts as { type, count }}
+                      <div class="hero-stat" style="--lc:{typeColor[type]}">
+                        <span class="hero-stat-n">{count}</span>
+                        <span class="hero-stat-label">{typeLabel[type]}</span>
+                      </div>
+                    {/each}
+                    {#if techCount > 0}
+                      <div class="hero-stat" style="--lc:var(--text-muted)">
+                        <span class="hero-stat-n">{techCount}</span>
+                        <span class="hero-stat-label">прочее</span>
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
             {/if}
           </div>
         {/each}
       </div>
     {/if}
+    </div><!-- versions-scroll -->
   {/if}
 </div>
 
 <style>
   .page {
-    padding: var(--space-8) var(--space-9);
+    padding: 0;
     height: 100%;
-    overflow-y: scroll;
+    overflow: hidden;
     box-sizing: border-box;
   }
   .page::-webkit-scrollbar { width: 0; }
   .page { scrollbar-width: none; }
+  /* Список версий — скроллится сам */
+  .versions-scroll {
+    height: 100%;
+    overflow-y: auto;
+    padding: var(--space-8) var(--space-9);
+    box-sizing: border-box;
+    scrollbar-width: none;
+  }
+  .versions-scroll::-webkit-scrollbar { width: 0; }
+
   h2 {
     margin: 0;
     font-size: var(--text-xl); font-weight: 700; color: var(--text-primary);
@@ -476,70 +504,134 @@
     box-shadow: inset 0 2px 4px rgba(0,0,0,0.6), inset 0 -1px 1px rgba(255,255,255,0.03), inset 0 1px 0 rgba(120,120,120,0.5);
   }
 
-  /* Сетка */
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-    gap: var(--space-3);
-  }
+  /* Список релизов: герой на всю ширину, остальные — сетка */
+  .releases { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: var(--space-3); }
+
   .card {
     text-align: left; width: 100%; font: inherit;
     background: var(--bg-elevated);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-panel);
-    padding: var(--space-4);
-    transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast);
+    padding: var(--space-3) var(--space-4);
+    cursor: pointer;
+    display: flex; flex-direction: column; gap: var(--space-1);
+    transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
   }
-  .card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
-    border-color: var(--border-default);
+  .card:hover { background: var(--bg-overlay); border-color: var(--border-default); box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+  .card-current { border-color: color-mix(in srgb, var(--accent) 25%, transparent); }
+
+  /* Герой — первая новая версия, растянуть на всю строку сетки */
+  .card-hero {
+    grid-column: 1 / -1;
+    flex-direction: column; align-items: stretch; gap: var(--space-3);
+    padding: var(--space-5);
+    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 8%, var(--bg-elevated)) 0%, var(--bg-elevated) 60%);
+    border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+    margin-bottom: var(--space-1);
   }
-  .card-current {
-    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 15%, transparent);
+  .card-hero:hover {
+    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, var(--bg-overlay)) 0%, var(--bg-overlay) 60%);
+    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
   }
-  .card-top { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
-  .card-tag { font-size: 13px; font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
-  .card-date { margin: 0 0 var(--space-2); font-size: 11px; color: var(--text-muted); }
-  .card-stat { margin: 0; font-size: 11px; color: var(--text-muted); }
+
+  /* Шапка */
+  .card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex: none; }
+  .card-hero .card-head { margin-bottom: 0; }
+
+  .card-tag { font-size: 13px; font-weight: 600; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+  .card-hero .card-tag { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; }
+
+  .card-badges { display: flex; gap: 4px; margin-left: auto; }
+
+  /* Мета строка */
+  .card-meta { display: flex; align-items: center; gap: var(--space-2); }
+  .card-hero .card-meta { flex: none; }
+  .card-date { font-size: 11px; color: var(--text-muted); }
+  .card-new { font-size: 11px; font-weight: 600; color: var(--thought-success); }
+  .card-hero .card-new { font-size: 15px; }
+
+  /* Описание (только у героя) */
+  .card-stat { margin: 0; font-size: 12px; color: var(--text-secondary); }
+
+  /* Тело героя: лево (текст + кнопка) и право (статистика) */
+  .hero-desc { margin: 0; font-size: 13px; color: var(--text-primary); line-height: 1.5; }
+  .hero-body { display: flex; align-items: center; justify-content: space-between; gap: var(--space-6); }
+  .hero-left { display: flex; flex-direction: column; gap: var(--space-3); }
+  .hero-stats {
+    display: flex; gap: var(--space-4); align-items: flex-end; flex-shrink: 0;
+    padding-left: var(--space-4);
+    border-left: 1px solid var(--border-subtle);
+  }
+  .hero-stat { display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-1); }
+  .hero-stat-n { font-size: 22px; font-weight: 700; color: var(--lc); line-height: 1; font-variant-numeric: tabular-nums; min-width: 2ch; text-align: right; }
+  .hero-stat-label { font-size: 10px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-secondary); }
+
+  /* Кнопка героя */
+  .hero-btn {
+    align-self: flex-start;
+    padding: 8px 20px;
+    background: var(--accent); color: #fff;
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-md);
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease;
+    margin-top: var(--space-1);
+  }
+  .hero-btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .hero-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
   /* Badges */
-  .badge {
-    font-size: 9px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
-    padding: 2px 5px; border-radius: var(--radius-sm);
+  .badge { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 6px; border-radius: var(--radius-sm); white-space: nowrap; border: 1px solid transparent; }
+  .badge.current { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+  .badge.new     { background: color-mix(in srgb, var(--thought-success) 10%, transparent); color: var(--thought-success); border-color: color-mix(in srgb, var(--thought-success) 30%, transparent); }
+  .badge.beta {
+    background: transparent;
+    border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+    color: var(--accent-hover);
+    letter-spacing: 0.08em;
   }
-  .badge.current { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
-  .badge.new { background: color-mix(in srgb, var(--status-success) 12%, transparent); color: var(--thought-success); }
-  .badge.beta { background: rgba(99,102,241,0.15); color: var(--status-downloading); }
-  .badge.old { background: rgba(255,255,255,0.06); color: var(--text-muted); }
+  .card-hero .badge.beta {
+    font-size: 11px;
+    padding: 4px 9px;
+  }
 
   /* Детальная страница */
-  .detail { display: flex; flex-direction: column; gap: var(--space-6); }
+  .detail {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .detail-sidebar {
+    display: flex; flex-direction: column;
+    padding: var(--space-8) var(--space-6) var(--space-8) var(--space-9);
+    border-right: 1px solid var(--border-subtle);
+    gap: var(--space-5);
+    overflow: hidden;
+  }
 
   .back {
     display: inline-flex; align-items: center; gap: var(--space-1);
     background: none; border: none; color: var(--text-muted); font-size: 12px;
     cursor: pointer; padding: 4px 8px 4px 4px; margin-left: -4px;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-md); flex-shrink: 0;
     transition: color var(--transition-fast), background var(--transition-fast);
   }
   .back:hover { color: var(--text-primary); background: var(--bg-elevated); }
   .back svg { width: 14px; height: 14px; }
 
-  /* Двухколоночный layout */
-  .detail-body {
-    display: grid;
-    grid-template-columns: 160px 1fr;
-    gap: var(--space-8);
-    align-items: start;
-  }
-
   /* Левая колонка мета */
   .detail-meta {
     display: flex; flex-direction: column; gap: var(--space-3);
-    position: sticky; top: 0;
   }
+
+  .detail-changes {
+    overflow-y: auto;
+    padding: var(--space-8) var(--space-9) var(--space-8) var(--space-8);
+    scrollbar-width: none;
+  }
+  .detail-changes::-webkit-scrollbar { width: 0; }
   .meta-ver {
     font-size: var(--text-xl); font-weight: 700; color: var(--text-primary);
     letter-spacing: -0.01em; font-variant-numeric: tabular-nums;
@@ -547,6 +639,7 @@
   .meta-date { font-size: 11px; color: var(--text-muted); }
   .meta-badges { display: flex; flex-direction: column; gap: var(--space-1); align-items: flex-start; }
   .meta-install { margin-top: var(--space-1); }
+  .meta-desc { margin: 0; font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
 
   .install-btn {
     width: 100%; padding: 7px 0;

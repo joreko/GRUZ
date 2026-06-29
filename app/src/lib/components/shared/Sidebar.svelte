@@ -5,9 +5,15 @@
   let { route = $bindable<Route>('download') } = $props()
 
   const nav: { id: Route; label: string }[] = [
-    { id: 'download',      label: 'Загрузка'   },
-    { id: 'gallery',       label: 'Галерея'    },
-    { id: 'settings',      label: 'Настройки'  },
+    { id: 'download',      label: 'Загрузка'    },
+    { id: 'gallery',       label: 'Галерея'     },
+    { id: 'queue-page',    label: 'Очередь'     },
+    { id: 'scheduler',     label: 'Планировщик' },
+    { id: 'channels',      label: 'Каналы'      },
+    { id: 'editor',        label: 'Редактор'    },
+    { id: 'storage',       label: 'Хранилище'   },
+    { id: 'graph',         label: 'Граф'        },
+    { id: 'settings',      label: 'Настройки'   },
   ]
 
   const activeDownloads = $derived(
@@ -41,6 +47,32 @@
           {#if activeDownloads.length > 0}
             <span class="badge">{activeDownloads.length}</span>
           {/if}
+        {:else if item.id === 'editor'}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/>
+          </svg>
+        {:else if item.id === 'queue-page'}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+            <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+          </svg>
+        {:else if item.id === 'scheduler'}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+          </svg>
+        {:else if item.id === 'channels'}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+          </svg>
+        {:else if item.id === 'storage'}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/>
+          </svg>
+        {:else if item.id === 'graph'}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><circle cx="12" cy="8" r="2"/>
+            <line x1="7" y1="12" x2="17" y2="6"/><line x1="7" y1="12" x2="17" y2="18"/><line x1="14" y1="8" x2="17" y2="6"/>
+          </svg>
         {:else if item.id === 'settings'}
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"/>

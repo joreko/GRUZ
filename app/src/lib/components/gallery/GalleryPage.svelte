@@ -133,6 +133,9 @@
       <button class="tab active">Видео</button>
     </div>
     <div class="top-actions">
+      <button class="btn-clear-all" aria-label="История" onclick={() => route = 'history'} use:tooltip={'История'}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><polyline points="12 7 12 12 15 15"/></svg>
+      </button>
       <button class="btn-clear-all" onclick={loadHistory} aria-label="Обновить" use:tooltip={'Обновить'}
         class:spin={loadingHistory}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>

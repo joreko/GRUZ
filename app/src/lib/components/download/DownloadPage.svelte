@@ -7,6 +7,7 @@
   import { tooltip } from '$lib/utils/tooltip'
 
   import type { Route } from '$lib/bridge/types'
+
   let { route = $bindable<Route>('download') } = $props()
 
   // Свободное место на диске загрузки
@@ -63,6 +64,13 @@
     && !dl.queuing && !dl.queued
     && (dl.format === 'audio' ? !!dl.audioCodec : !!dl.videoCodec)
     && (dl.format === 'video' ? !!dl.audioCodec : true)
+    && (dl.format === 'audio' || dl.fps !== null || (() => {
+      if (!dl.quality) return true
+      const res = (dl.info?.formats ?? []).find(f => f.format_id === dl.quality)?.resolution ?? null
+      if (!res) return true
+      const fps = Math.max(...(dl.info?.formats ?? []).filter(f => f.resolution === res).map(f => f.fps ?? 0))
+      return fps <= 0
+    })())
   )
 
   let downloadShake = $state(false)
@@ -333,14 +341,24 @@
   const maxBitrate = $derived(
     selectedFormat
       ? Math.round(selectedFormat.is_audio_only
-          ? Math.max(...audioFormats.map(f => f.abr ?? 0))
+          ? (selectedFormat.abr ?? 0)
           : (selectedFormat.vbr ?? 0))
       : 0
   )
-  const minBitrate = $derived(
-    selectedFormat && maxBitrate > 0 ? Math.round(maxBitrate * 0.1) : 0
-  )
   const currentBitrate = $derived(dl.bitrate ?? maxBitrate)
+  // Минимальный осмысленный битрейт: для аудио ≥32 kbps, для видео ≥100 kbps
+  const minBitrate = $derived(
+    maxBitrate > 0
+      ? (selectedFormat?.is_audio_only ? Math.max(32, Math.round(maxBitrate * 0.1)) : Math.max(100, Math.round(maxBitrate * 0.05)))
+      : 1
+  )
+
+  // Защита: сбрасываем bitrate если он вдруг превышает maxBitrate
+  $effect(() => {
+    if (dl.bitrate !== null && maxBitrate > 0 && dl.bitrate > maxBitrate) {
+      dl.bitrate = null
+    }
+  })
 
   function formatSubs(n: number): string {
     const fmt = (v: number, dec = 1) => v.toLocaleString('ru-RU', { maximumFractionDigits: dec, minimumFractionDigits: dec })
@@ -411,6 +429,7 @@
 
   // Выбрать качество по умолчанию с учётом настроек пользователя
   function pickDefaultQuality() {
+    dl.bitrate = null
     if ((dl.format === 'video' || dl.format === 'video_only') && videoFormats.length) {
       const preferred = store.settings?.default_quality
       // Проверяем доступно ли текущее качество
@@ -560,6 +579,7 @@
 
   function setFormat(f: string) {
     dl.format = f
+    dl.bitrate = null
     if (f === 'audio') {
       if (!['mp3','m4a','opus'].includes(dl.container)) dl.container = 'm4a'
     } else {
@@ -947,7 +967,9 @@
 
         <!-- Видео-кодек -->
         {#if dl.format === 'video' || dl.format === 'video_only'}
-        <div class="codec-cards-grid">
+        <div class="codec-row">
+          <span class="codec-label">Видео</span>
+          <div class="codec-cards-grid">
           {#each VIDEO_CODECS as codec}
             {@const ok = isVideoCodecOk(codec.id)}
             <button
@@ -958,8 +980,9 @@
               onmouseenter={(e) => onCodecEnter(e, codec)}
               onmouseleave={onCodecLeave}
               onclick={() => {
-                if (dl.videoCodec === codec.id) { dl.videoCodec = null; return }
+                if (dl.videoCodec === codec.id) { dl.videoCodec = null; dl.bitrate = null; return }
                 dl.videoCodec = codec.id
+                dl.bitrate = null
                 if (codec.id === 'prores') dl.container = 'mov'
                 else if (!isVideoCodecOk(codec.id)) {
                   const compatible = Object.entries(VIDEO_COMPAT).find(([, v]) => v.includes(codec.id))
@@ -971,11 +994,14 @@
             </button>
           {/each}
         </div>
+        </div>
         {/if}
 
         <!-- Аудио-кодек — только при видео со звуком -->
         {#if dl.format === 'video'}
-        <div class="codec-cards-grid">
+        <div class="codec-row">
+          <span class="codec-label">Аудио</span>
+          <div class="codec-cards-grid">
           {#each AUDIO_CODECS as codec}
             {@const ok = isAudioCodecOk(codec.id)}
             <button
@@ -997,6 +1023,7 @@
               <span class="q-value">{codec.label}</span>
             </button>
           {/each}
+        </div>
         </div>
         {/if}
       {:else}
@@ -1057,23 +1084,39 @@
       {/if}
 
       <!-- Битрейт -->
-      {#if maxBitrate > 0}
-        {@const qualityLabel = currentBitrate >= maxBitrate * 0.8 ? 'высокое' : currentBitrate >= maxBitrate * 0.4 ? 'среднее' : 'низкое'}
-        <div class="bitrate-card">
-          <div class="bitrate-tooltip" style="left: clamp(60px, {((currentBitrate - minBitrate) / (maxBitrate - minBitrate) * 100).toFixed(1)}%, calc(100% - 60px))">
-            <span class="bt-value">{currentBitrate} kbps</span>
-            <span class="bt-quality">{qualityLabel}</span>
-            {#if estimatedSize}<span class="bt-size">~{formatBytes(estimatedSize)}</span>{/if}
-          </div>
-          <input
-            class="bitrate-slider"
-            type="range"
-            min={minBitrate}
-            max={maxBitrate}
-            step={Math.max(1, Math.round(maxBitrate / 100))}
-            value={currentBitrate}
-            oninput={(e) => { const v = +(e.target as HTMLInputElement).value; dl.bitrate = v >= maxBitrate ? null : v }}
-          />
+      {#if maxBitrate > 0 || dl.quality}
+        {@const isDisabled = maxBitrate === 0}
+        {@const pct = maxBitrate > 0 ? (currentBitrate - minBitrate) / (maxBitrate - minBitrate) * 100 : 100}
+        {@const bitrateQuality = pct >= 80 ? 'высокое' : pct >= 40 ? 'среднее' : 'низкое'}
+        <div class="bitrate-card" class:bitrate-disabled={isDisabled}>
+          {#if !isDisabled}
+            <div class="bitrate-track-wrap">
+              <input
+                class="bitrate-slider"
+                type="range"
+                min={minBitrate}
+                max={maxBitrate}
+                step={Math.max(1, Math.round((maxBitrate - minBitrate) / 100))}
+                value={currentBitrate}
+                style="--pct: {pct.toFixed(1)}%"
+                oninput={(e) => {
+                  const v = +(e.target as HTMLInputElement).value
+                  const p = (v - minBitrate) / (maxBitrate - minBitrate) * 100
+                  ;(e.target as HTMLInputElement).style.setProperty('--pct', p.toFixed(1) + '%')
+                  dl.bitrate = v >= maxBitrate ? null : v
+                }}
+              />
+              <div class="bitrate-marks">
+                <span class="bm" style="left: calc(8px + 40% * ((100% - 16px) / 100%))"><span class="bm-label">среднее</span></span>
+                <span class="bm" style="left: calc(8px + 80% * ((100% - 16px) / 100%))"><span class="bm-label">высокое</span></span>
+              </div>
+              <div class="bitrate-tooltip" style="left: calc(8px + {pct.toFixed(1)}% * ((100% - 16px) / 100%))">
+                <span class="bt-value">{dl.bitrate === null ? 'Авто' : `${currentBitrate} kbps`}</span>
+                {#if dl.bitrate !== null}<span class="bt-quality">{bitrateQuality}</span>{/if}
+                {#if estimatedSize}<span class="bt-size">~{formatBytes(estimatedSize)}</span>{/if}
+              </div>
+            </div>
+          {/if}
         </div>
       {/if}
 
@@ -1621,36 +1664,68 @@
   }
 
   /* Битрейт */
-  .bitrate-card { padding: 4px 0; position: relative; }
-  .bitrate-card:hover .bitrate-tooltip { opacity: 1; transform: translateX(-50%) translateY(0); }
-  .bitrate-tooltip {
-    position: absolute; bottom: calc(100% + 8px);
-    transform: translateX(-50%) translateY(4px);
-    display: flex; flex-direction: column; gap: 2px;
-    pointer-events: none; opacity: 0;
-    transition: opacity var(--transition-fast), transform var(--transition-fast);
-    white-space: nowrap; z-index: 9999;
-    background: var(--bg-elevated); padding: 6px 10px;
-    border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);
+  .bitrate-card { padding: var(--space-2) 0; }
+  .bitrate-disabled { opacity: 0.45; pointer-events: none; }
+
+  .bitrate-track-wrap { position: relative; padding-bottom: 14px; }
+  .bitrate-track-wrap::before,
+  .bitrate-track-wrap::after { display: none; }
+  .bitrate-marks { position: absolute; top: 0; left: 0; right: 0; height: 4px; pointer-events: none; }
+  .bm {
+    position: absolute; top: 50%; transform: translate(-50%, -50%);
+    display: flex; flex-direction: column; align-items: center;
   }
-  .bt-value { font-size: 13px; font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
-  .bt-quality { font-size: 10px; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
-  .bt-size { font-size: 11px; color: var(--text-secondary); }
+  .bm::before {
+    content: ''; display: block;
+    width: 1px; height: 8px;
+    background: var(--text-primary);
+  }
+  .bm-label {
+    position: absolute; top: calc(100% + 5px);
+    font-size: 9px; color: var(--text-muted);
+    white-space: nowrap; transform: translateX(-50%); left: 50%;
+  }
+
+  /* --pct задаётся инлайн на input; псевдоэлемент трека наследует через каскад (Chromium 108+) */
   .bitrate-slider {
     -webkit-appearance: none; appearance: none;
-    width: 100%; height: 4px; border-radius: 2px;
-    background: var(--border-subtle); outline: none; cursor: pointer;
+    width: 100%; height: 4px;
+    background: transparent;
+    outline: none; cursor: pointer; margin: 0; display: block;
+  }
+  .bitrate-slider::-webkit-slider-runnable-track {
+    height: 4px; border-radius: 99px;
+    background: linear-gradient(to right, var(--accent) var(--pct), rgba(255,255,255,0.15) var(--pct));
   }
   .bitrate-slider::-webkit-slider-thumb {
     -webkit-appearance: none; appearance: none;
     width: 16px; height: 16px; border-radius: 50%;
     background: var(--accent); cursor: pointer;
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
-    transition: box-shadow var(--transition-fast);
+    margin-top: -6px;
+    transition: box-shadow 150ms ease-out, transform 150ms ease-out;
   }
-  .bitrate-slider::-webkit-slider-thumb:hover {
+  .bitrate-slider::-webkit-slider-thumb:hover,
+  .bitrate-slider:focus-visible::-webkit-slider-thumb {
     box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 25%, transparent);
+    transform: scale(1.15);
   }
+
+  .bitrate-tooltip {
+    position: absolute; bottom: calc(100% + 10px);
+    transform: translateX(-50%) translateY(4px);
+    display: flex; flex-direction: column; gap: 2px;
+    pointer-events: none; opacity: 0;
+    transition: opacity 150ms ease-out, transform 150ms ease-out;
+    white-space: nowrap; z-index: 9999;
+    background: var(--bg-elevated); padding: 6px 10px;
+    border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+  .bitrate-slider:hover ~ .bitrate-tooltip,
+  .bitrate-slider:focus-visible ~ .bitrate-tooltip { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .bt-value { font-size: 13px; font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+  .bt-quality { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .bt-size { font-size: 10px; color: var(--text-muted); }
   /* Пикеры кодеков */
   
   
@@ -1672,7 +1747,9 @@
   @keyframes spin    { to { transform: rotate(360deg); } }
   @keyframes pulse   { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 
-  .codec-cards-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+  .codec-row { display: flex; align-items: center; gap: var(--space-3); }
+  .codec-label { font-size: 11px; color: var(--text-muted); white-space: nowrap; width: 32px; flex-shrink: 0; }
+  .codec-cards-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; flex: 1; }
   .quality-card.codec-card { min-height: 34px; padding: 8px; overflow: visible; }
   .codec-card .q-value { font-size: 13px; font-weight: 700; letter-spacing: 0.03em; }
   .codec-card.incompatible { opacity: 0.35; }
