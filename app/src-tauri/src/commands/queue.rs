@@ -16,9 +16,9 @@ pub async fn remove_task(
     task_id: String,
     orchestrator: State<'_, Arc<Mutex<Orchestrator>>>,
 ) -> Result<()> {
-    let mut orch = orchestrator.lock().await;
-    orch.remove_task(&task_id).await?;
-    orch.thought_remove();
+    let orch = Arc::clone(&orchestrator);
+    Orchestrator::remove_task(orch, &task_id).await?;
+    orchestrator.lock().await.thought_remove();
     Ok(())
 }
 
@@ -51,4 +51,13 @@ pub async fn reorder_task(
         .await
         .reorder_task(&task_id, new_index)
         .await
+}
+
+#[tauri::command]
+pub async fn retry_task(
+    task_id: String,
+    orchestrator: State<'_, Arc<Mutex<Orchestrator>>>,
+) -> Result<()> {
+    let orch = Arc::clone(&orchestrator);
+    Orchestrator::retry_task(orch, &task_id).await
 }

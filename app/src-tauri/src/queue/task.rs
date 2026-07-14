@@ -51,6 +51,7 @@ pub struct DownloadTask {
     pub format: String,          // "video" | "video_only" | "audio"
     pub quality: String,         // format_id из yt-dlp
     pub fps: Option<u32>,        // ограничение fps (None = оригинал)
+    pub source_fps: Option<u32>, // реальный fps источника (для отображения в галерее)
     pub bitrate: Option<u32>,    // ограничение битрейта kbps (None = максимум)
     pub container: String,       // "mp4", "webm", "mp3"
     pub trim_start: Option<i64>, // секунды | None
@@ -63,6 +64,9 @@ pub struct DownloadTask {
     pub error: Option<String>,
     pub file_path: Option<String>,
     pub file_size: Option<i64>,
+    /// Явный ручной порядок в очереди (устанавливается через reorder_task).
+    /// None — сортировка по priority/created_at (поведение по умолчанию).
+    pub ordering: Option<u32>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -84,6 +88,7 @@ impl DownloadTask {
             format,
             quality,
             fps: None,
+            source_fps: None,
             bitrate: None,
             container,
             trim_start: None,
@@ -96,6 +101,7 @@ impl DownloadTask {
             error: None,
             file_path: None,
             file_size: None,
+            ordering: None,
             created_at: Utc::now(),
         }
     }

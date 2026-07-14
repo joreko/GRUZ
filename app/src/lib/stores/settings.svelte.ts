@@ -14,11 +14,15 @@ export async function loadSettings() {
     store.settings = await commands.getSettings()
   } catch (e) {
     store.error = e instanceof Error ? e.message : String(e)
+    commands.logFrontend(store.error, 'error').catch(() => {})
   }
 }
 
-export async function updateSetting(key: keyof Settings, value: string) {
-  await commands.updateSetting(key, value)
+// silent=true по умолчанию: программные сейвы (дефолтная папка, вид галереи,
+// автосейв шаблонов) не должны вызывать мысль «обновил настройки».
+// Только SettingsPage шлёт silent=false при реальном действии пользователя.
+export async function updateSetting(key: keyof Settings, value: string, silent = true) {
+  await commands.updateSetting(key, value, silent)
   if (store.settings) {
     const s = store.settings as unknown as Record<string, unknown>
     if (numFields.has(key))       s[key] = value === '' ? null : Number(value)

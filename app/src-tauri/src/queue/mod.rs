@@ -81,22 +81,29 @@ impl Queue {
         true
     }
 
-    /// Удалить из очереди завершённые/отменённые/упавшие задачи.
-    /// Возвращает ID удалённых задач — оркестратор удалит их из БД.
+    /// Удалить из очереди только успешно завершённые задачи (ушедшие в историю).
+    /// Failed/Cancelled НЕ удаляются — пользователь должен видеть ошибку и иметь
+    /// возможность повторить задачу (retry_task). Возвращает ID удалённых задач.
     pub fn trim_completed(&mut self) -> Vec<String> {
         let mut removed = Vec::new();
         self.tasks.retain(|t| {
-            if matches!(
-                t.state,
-                TaskState::Waiting | TaskState::Downloading | TaskState::Converting
-            ) {
-                true
-            } else {
+            if t.state == TaskState::Completed {
                 removed.push(t.id.clone());
                 false
+            } else {
+                true
             }
         });
         removed
+    }
+
+    /// Перенумеровать `ordering` всех задач в соответствии с их текущим порядком
+    /// в векторе. Используется после ручного reorder_task, чтобы зафиксировать
+    /// явный порядок (см. Orchestrator::reorder_task).
+    pub fn renumber_ordering(&mut self) {
+        for (i, t) in self.tasks.iter_mut().enumerate() {
+            t.ordering = Some(i as u32);
+        }
     }
 
     pub fn active_count(&self) -> usize {

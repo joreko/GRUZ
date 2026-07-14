@@ -24,7 +24,8 @@ export function isValidYoutubeUrl(url: string): boolean {
     return (
       u.hostname.includes('youtube.com') ||
       u.hostname === 'youtu.be' ||
-      u.hostname.includes('music.youtube.com')
+      u.hostname.includes('music.youtube.com') ||
+      u.hostname.includes('youtube-nocookie.com')
     )
   } catch {
     return false

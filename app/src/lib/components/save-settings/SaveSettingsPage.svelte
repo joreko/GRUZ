@@ -76,7 +76,7 @@
           <div class="field-row">
             <span class="field-label">Папка</span>
             <div class="dir-row">
-              <span class="dir-path" class:muted={!dirVal}>{dirVal || 'По умолчанию'}</span>
+              <span class="dir-path" class:muted={!dirVal} data-copy-path={dirVal || undefined}>{dirVal || 'По умолчанию'}</span>
               <button class="btn-browse" onclick={() => pickDir(dirKey)}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
                 Обзор

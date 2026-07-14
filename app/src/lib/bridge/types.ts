@@ -1,6 +1,6 @@
 // Типы, зеркалящие Rust-структуры. Обновлять синхронно с src-tauri/src/
 
-export type Route = 'download' | 'gallery' | 'history' | 'settings' | 'save-settings' | 'updates' | 'editor' | 'storage' | 'queue-page' | 'scheduler' | 'channels' | 'orchestrator' | 'graph'
+export type Route = 'download' | 'gallery' | 'settings' | 'save-settings' | 'updates' | 'editor' | 'storage' | 'scheduler' | 'channels' | 'orchestrator' | 'graph' | 'debug'
 
 export type TaskState =
   | 'waiting' | 'downloading' | 'converting'
@@ -20,6 +20,7 @@ export interface DownloadTask {
   quality: string
   container: string
   fps: number | null
+  source_fps: number | null
   bitrate: number | null
   video_codec: string | null
   audio_codec: string | null
@@ -37,6 +38,7 @@ export interface DownloadTask {
   file_path: string | null
   file_size: number | null
   created_at: string
+  stream_type: string | null
 }
 
 export interface VideoInfo {
@@ -84,6 +86,7 @@ export interface HistoryItem {
   platform: string
   channel_id: string | null
   fps: number | null
+  source_fps: number | null
   bitrate: number | null
   audio_codec: string | null
   video_codec: string | null
@@ -92,6 +95,21 @@ export interface HistoryItem {
   playlist_id: string | null
   playlist_index: number | null
   created_at: number  // Unix timestamp (секунды)
+  // v2-поля (локальные превью, избранное, soft-delete, реальные метаданные)
+  local_thumbnail: string | null
+  favorite: boolean
+  deleted_at: number | null
+  duration_real: number | null
+  width: number | null
+  height: number | null
+}
+
+export interface Album {
+  id: string
+  name: string
+  kind: string  // 'user' | 'smart'
+  query: string | null
+  created_at: number
 }
 
 export interface ChannelPrefs {
@@ -149,11 +167,24 @@ export interface Settings {
   save_tpl_trimmed: string
 }
 
+export interface ShortcutInfo {
+  name: string
+  path: string
+  target: string
+  // 'start_menu' | 'desktop'
+  location: string
+  // указывает на gruz.exe
+  is_gruz: boolean
+  // указывает на gruz.exe, но имя отличается от «Груз» (поломанное)
+  is_broken: boolean
+}
+
 export interface StartDownloadRequest {
   url: string
   format: string
   quality: string
   fps: number | null
+  source_fps: number | null
   bitrate: number | null
   container: string
   title: string | null
@@ -173,4 +204,5 @@ export interface DownloadProgress {
   eta: string | null
   downloaded_bytes: number | null
   total_bytes: number | null
+  stream_type: string | null
 }

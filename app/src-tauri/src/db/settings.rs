@@ -122,4 +122,12 @@ impl Database {
             .await?;
         Ok(())
     }
+
+    pub async fn get_setting(&self, key: &str) -> Result<Option<String>> {
+        let row = sqlx::query_as::<_, KV>("SELECT key, value FROM settings WHERE key = ?")
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|r| r.value))
+    }
 }

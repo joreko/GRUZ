@@ -137,11 +137,14 @@ let inflight: Promise<ReleaseChangelog[]> | null = null
 
 // Основная функция — загружает полный changelog по релизам параллельно.
 // Результат кэшируется на 5 минут; параллельные вызовы дедуплицируются.
-export async function fetchChangelog(): Promise<ReleaseChangelog[]> {
-  if (memoryCache && Date.now() - memoryCache.at < CACHE_TTL_MS) {
-    return memoryCache.data
+// force=true принудительно обходит кэш и инфлайт (ручная «Проверить обновления»).
+export async function fetchChangelog(force = false): Promise<ReleaseChangelog[]> {
+  if (!force) {
+    if (memoryCache && Date.now() - memoryCache.at < CACHE_TTL_MS) {
+      return memoryCache.data
+    }
+    if (inflight) return inflight
   }
-  if (inflight) return inflight
 
   inflight = fetchChangelogUncached()
     .then(data => {
@@ -151,6 +154,75 @@ export async function fetchChangelog(): Promise<ReleaseChangelog[]> {
     .finally(() => { inflight = null })
 
   return inflight
+}
+
+// Сколько запросов к GitHub API ещё доступно в текущем часовом окне.
+// Эндпоинт rate_limit сам НЕ расходует лимит — можно звать свободно.
+// Возвращает null при сбое сети/API (не блокирует основной сценарий).
+export async function fetchRateLimitRemaining(): Promise<number | null> {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), 10_000)
+  try {
+    const r = await fetch('https://api.github.com/rate_limit', { signal: ctrl.signal })
+    if (!r.ok) return null
+    const data = await r.json()
+    return data?.resources?.core?.remaining ?? null
+  } catch {
+    return null
+  } finally {
+    clearTimeout(t)
+  }
+}
+
+interface GithubAsset {
+  name: string
+  browser_download_url: string
+}
+
+// Самый лёгкий способ узнать, появился ли новый релиз: один запрос к
+// последнему релизу. Для авто-проверки раз в минуту — чтобы не жечь лимит
+// GitHub (60/час): полный fetchChangelog стоит ~1+N запросов. Возвращает
+// tag_name или null при сбое/отсутствии.
+export async function fetchLatestTag(): Promise<string | null> {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), 10_000)
+  try {
+    const r = await fetch(`${API}/releases?per_page=1`, { signal: ctrl.signal })
+    if (!r.ok) return null
+    const data = await r.json()
+    const first = Array.isArray(data) ? data[0] : null
+    return first?.tag_name ?? null
+  } catch {
+    return null
+  } finally {
+    clearTimeout(t)
+  }
+}
+
+// Реальный URL установщика для тега. Имя ассета берём из релиза на GitHub,
+// а не хардкодим GRUZ_<ver>_Setup.exe — иначе беты/переименования в CI
+// или отсутствие сборки для тега уходят в 404 при скачивании.
+// Возвращает null, если ассета-установщика нет (релиз без exe) или сеть упала.
+export async function resolveSetupAsset(tag: string): Promise<string | null> {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), 10_000)
+  try {
+    const r = await fetch(`${API}/releases/tags/${tag}`, { signal: ctrl.signal })
+    if (!r.ok) return null
+    const data = await r.json()
+    const assets: GithubAsset[] = data?.assets ?? []
+    const pick = (re: RegExp) => assets.find(a => re.test(a.name))
+    const found =
+      pick(/^GRUZ_.*[_-]Setup\.exe$/i) ??
+      pick(/_Setup\.exe$/i) ??
+      pick(/[._-]setup\.exe$/i) ??
+      pick(/\.exe$/i)
+    return found ? found.browser_download_url : null
+  } catch {
+    return null
+  } finally {
+    clearTimeout(t)
+  }
 }
 
 async function fetchChangelogUncached(): Promise<ReleaseChangelog[]> {
@@ -191,7 +263,7 @@ async function fetchChangelogUncached(): Promise<ReleaseChangelog[]> {
       name: rel.name || rel.tag_name,
       publishedAt: rel.published_at,
       prerelease: rel.prerelease,
-      description: rel.body || '',
+      description: (rel.body || '').split(/\r?\n\r?\n/)[0].trim(),
       commits,
       totalUserLines: commits.reduce((s, c) => s + c.lines.length + c.techLines.length, 0),
       latestCounter,
