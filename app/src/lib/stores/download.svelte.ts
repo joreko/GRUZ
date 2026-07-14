@@ -12,6 +12,7 @@ export const dl = $state({
   format:         'video',
   quality:        '',
   fps:            null as number | null,  // выбранный fps для текущего разрешения
+  sourceFps:      null as number | null,  // реальный fps источника (из формата)
   bitrate:        null as number | null,  // выбранный битрейт kbps (null = максимум)
   container:      'mp4',
   videoCodec:     null as string | null,  // null = auto (лучший доступный)
@@ -30,6 +31,7 @@ export function reset() {
   dl.queuing = false
   dl.quality = ''
   dl.fps = null
+  dl.sourceFps = null
   dl.bitrate = null
   dl.videoCodec = null
   dl.audioCodec = null

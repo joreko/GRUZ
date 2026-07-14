@@ -254,7 +254,11 @@ async fn check_webview2(app: &AppHandle) -> anyhow::Result<()> {
 /// Запускает PowerShell скрипт через временный .ps1 файл (обходит проблемы с кавычками в -Command)
 fn run_ps_script(script: &str) -> anyhow::Result<()> {
     let tmp = std::env::temp_dir().join(format!("gruz_{}.ps1", uuid::Uuid::new_v4()));
-    std::fs::write(&tmp, script.as_bytes())?;
+    // UTF-8 BOM обязателен: иначе PowerShell на ru-Windows читает .ps1 как CP1251
+    // и портит кириллицу в имени ярлыка → «РісѓР·» вместо «Груз».
+    let mut bytes = Vec::from(b"\xef\xbb\xbf");
+    bytes.extend_from_slice(script.as_bytes());
+    std::fs::write(&tmp, &bytes)?;
     let result = std::process::Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
                "-ExecutionPolicy", "Bypass", "-File",

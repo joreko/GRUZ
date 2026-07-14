@@ -12,6 +12,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -165,6 +167,14 @@ jobs:
           $exe = "installer/src-tauri/target/release/gruz-installer.exe"
           Copy-Item $exe "GRUZ_${asset}_Setup.exe"
 
+      - name: Compute installer checksum
+        shell: pwsh
+        run: |
+          $asset = "${{ github.ref_name }}".TrimStart('v')
+          # sha256sum-формат: "<hash>  <имя>" — парсится на клиенте (первый токен)
+          $h = (Get-FileHash -Algorithm SHA256 -Path "GRUZ_${asset}_Setup.exe").Hash.ToLower()
+          "$h  GRUZ_${asset}_Setup.exe" | Out-File -FilePath "GRUZ_${asset}_Setup.exe.sha256" -Encoding UTF8 -NoNewline
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -172,6 +182,7 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             GRUZ_*_Setup.exe
+            GRUZ_*_Setup.exe.sha256
             GRUZ_*_portable.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

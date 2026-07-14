@@ -1,4 +1,6 @@
+pub mod pipeline;
 pub mod process;
+pub mod spec;
 
 use serde::{Deserialize, Serialize};
 
@@ -42,4 +44,6 @@ pub struct DownloadProgress {
     pub eta: Option<String>,
     pub downloaded_bytes: Option<i64>,
     pub total_bytes: Option<i64>,
+    /// "video" / "audio" / "converting" — какой поток сейчас обрабатывается
+    pub stream_type: Option<String>,
 }

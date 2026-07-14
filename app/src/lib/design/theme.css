@@ -1,4 +1,6 @@
 /* CSS custom properties из tokens.ts — применяются глобально */
+/* Inter грузится через сеть опционально; офлайн приложение использует
+   надёжный системный fallback-стек (system-ui / Segoe UI / Roboto). */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
@@ -8,6 +10,7 @@
   --bg-surface:  #161616;
   --bg-elevated: #1e1e1e;
   --bg-overlay:  #252525;
+  --bg-selected: #111111;
 
   /* Граница */
   --border-subtle:  #2a2a2a;
@@ -18,9 +21,10 @@
   --text-primary:   #f0f0f0;
   --text-secondary: #a0a0a0;
   --text-muted:     #606060;
+  --text-tertiary:  #8a8a8a;
   --text-inverse:   #0f0f0f;
 
-  /* Акцент */
+  /* Акцент — фирменный красный */
   --accent:        #e63946;
   --accent-hover:  #ff4d5a;
   --accent-active: #cc2f3b;
@@ -43,6 +47,23 @@
   --thought-pink:    #ff80cc;
   --thought-dash:    #3f3f46;
 
+  /* Полноэкранные сцены (лайтбокс) */
+  --scrim:        #000000;
+  --scrim-soft:   #0c0c0c;
+  --scrim-overlay: rgba(0, 0, 0, 0.72);
+  --on-scrim:     #ffffff;
+
+  /* Тени (токенизированы) */
+  --shadow-card:      0 4px 20px rgba(0, 0, 0, 0.2);
+  --shadow-card-hover: 0 12px 32px rgba(0, 0, 0, 0.5);
+  --shadow-panel:     0 24px 64px rgba(0, 0, 0, 0.6);
+  --shadow-menu:      0 8px 32px rgba(0, 0, 0, 0.5);
+
+  /* Градиенты-скримы карточек (всегда видимый + при наведении) */
+  --card-scrim:           linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.2) 60%, transparent 100%);
+  --card-scrim-hover:     linear-gradient(to top, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.45) 45%, rgba(0,0,0,0.1) 70%, transparent 100%);
+  --card-scrim-persistent: linear-gradient(to top, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0.25) 35%, transparent 60%);
+
   /* Отступы */
   --space-1: 4px;  --space-2: 8px;   --space-3: 12px;
   --space-4: 16px; --space-5: 20px;  --space-6: 24px;
@@ -53,7 +74,7 @@
   --radius-lg: 12px; --radius-panel: 14px; --radius-xl: 16px; --radius-2xl: 48px; --radius-full: 9999px;
 
   /* Типографика */
-  --font-sans: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
   --text-xs: 11px; --text-sm: 13px; --text-md: 15px;
   --text-lg: 17px; --text-xl: 20px; --text-2xl: 24px;
@@ -77,12 +98,17 @@ html, body {
   font-family: var(--font-sans);
   font-size: var(--text-md);
   -webkit-font-smoothing: antialiased;
-  user-select: none;
-  /* Декоративные градиенты для миниатюр */
-  --thumb-g1: linear-gradient(135deg,#3b82f6,#60a5fa);
-  --thumb-g2: linear-gradient(135deg,#6366f1,#8b5cf6);
-  --thumb-g3: linear-gradient(135deg,#06b6d4,#3b82f6);
-  --thumb-g4: linear-gradient(135deg,#10b981,#14b8a6);
+  user-select: auto;
+  /* Декоративные градиенты для миниатюр — нейтральные тёмные тона дизайн-системы */
+  --thumb-g1: linear-gradient(135deg,#1c1c1c,#262626);
+  --thumb-g2: linear-gradient(135deg,#202020,#2b2b2b);
+  --thumb-g3: linear-gradient(135deg,#191919,#232323);
+  --thumb-g4: linear-gradient(135deg,#222222,#2d2d2d);
+}
+
+/* Текстовые поля — разрешаем выделение и копирование (URL и т.п.) */
+input, textarea, [contenteditable="true"] {
+  user-select: text;
 }
 
 #app { height: 100%; display: flex; flex-direction: column; }

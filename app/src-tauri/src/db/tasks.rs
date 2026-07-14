@@ -18,6 +18,7 @@ pub struct SavedTask {
     pub quality: String,
     pub container: String,
     pub fps: Option<i64>,
+    pub source_fps: Option<i64>,
     pub bitrate: Option<i64>,
     pub audio_codec: Option<String>,
     pub video_codec: Option<String>,
@@ -36,6 +37,8 @@ pub struct SavedTask {
     pub error: Option<String>,
     pub file_path: Option<String>,
     pub file_size: Option<i64>,
+    // явный ручной порядок в очереди (None = сортировка по priority/created_at)
+    pub ordering: Option<i64>,
     // зарезервировано для отложенного запуска
     #[allow(dead_code)]
     pub schedule_at: Option<i64>,
@@ -78,6 +81,7 @@ impl From<SavedTask> for DownloadTask {
             quality: s.quality,
             container: s.container,
             fps: s.fps.map(|v| u32::try_from(v).unwrap_or(0)),
+            source_fps: s.source_fps.map(|v| u32::try_from(v).unwrap_or(0)),
             bitrate: s.bitrate.map(|v| u32::try_from(v).unwrap_or(0)),
             audio_codec: s.audio_codec,
             video_codec: s.video_codec,
@@ -96,6 +100,7 @@ impl From<SavedTask> for DownloadTask {
             },
             file_path: s.file_path,
             file_size: s.file_size,
+            ordering: s.ordering.map(|v| v as u32),
             // chrono::DateTime из unix-секунд; unwrap_or на случай переполнения
             created_at: chrono::DateTime::from_timestamp(s.created_at, 0)
                 .unwrap_or_else(chrono::Utc::now),
@@ -110,17 +115,17 @@ impl Database {
         let now = Utc::now().timestamp();
         // INSERT с сохранением created_at при повторном вызове (ON CONFLICT → UPDATE)
         sqlx::query(
-            "INSERT INTO tasks
+            "INSERT INTO downloads
              (id, url, video_id, platform, title, channel, channel_id, thumbnail, duration,
-              format, quality, container, fps, bitrate, audio_codec, video_codec,
+              format, quality, container, fps, source_fps, bitrate, audio_codec, video_codec,
               trim_start, trim_end, is_playlist, playlist_id, playlist_index,
-              state, priority, progress, error, file_path, file_size, schedule_at,
+              state, priority, progress, error, file_path, file_size, ordering, schedule_at,
               created_at, updated_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
              ON CONFLICT(id) DO UPDATE SET
               state=excluded.state, priority=excluded.priority, progress=excluded.progress,
               error=excluded.error, file_path=excluded.file_path, file_size=excluded.file_size,
-              updated_at=excluded.updated_at",
+              ordering=excluded.ordering, updated_at=excluded.updated_at",
         )
         .bind(&task.id)
         .bind(&task.url)
@@ -135,6 +140,7 @@ impl Database {
         .bind(&task.quality)
         .bind(&task.container)
         .bind(task.fps.map(|v| v as i64))
+        .bind(task.source_fps.map(|v| v as i64))
         .bind(task.bitrate.map(|v| v as i64))
         .bind(&task.audio_codec)
         .bind(&task.video_codec)
@@ -149,6 +155,7 @@ impl Database {
         .bind(&task.error)
         .bind(&task.file_path)
         .bind(task.file_size)
+        .bind(task.ordering.map(|v| v as i64))
         .bind(Option::<i64>::None)
         .bind(task.created_at.timestamp())
         .bind(now)
@@ -160,12 +167,12 @@ impl Database {
     pub async fn load_pending_tasks(&self) -> Result<Vec<SavedTask>> {
         let tasks = sqlx::query_as::<_, SavedTask>(
             "SELECT id, url, video_id, platform, title, channel, channel_id, thumbnail, duration,
-             format, quality, container, fps, bitrate, audio_codec, video_codec,
-             trim_start, trim_end, is_playlist, playlist_id, playlist_index,
-             state, priority, progress, error, file_path, file_size, schedule_at,
-             created_at, updated_at
-             FROM tasks WHERE state IN ('waiting', 'paused', 'downloading', 'converting')
-             ORDER BY priority DESC, created_at ASC",
+              format, quality, container, fps, source_fps, bitrate, audio_codec, video_codec,
+              trim_start, trim_end, is_playlist, playlist_id, playlist_index,
+              state, priority, progress, error, file_path, file_size, ordering, schedule_at,
+              created_at, updated_at
+              FROM downloads WHERE state IN ('waiting', 'paused', 'downloading', 'converting')
+              ORDER BY CASE WHEN ordering IS NULL THEN 1 ELSE 0 END, ordering ASC, priority DESC, created_at ASC",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -173,10 +180,31 @@ impl Database {
     }
 
     pub async fn delete_task(&self, id: &str) -> Result<()> {
-        sqlx::query("DELETE FROM tasks WHERE id = ?")
+        sqlx::query("DELETE FROM downloads WHERE id = ?")
             .bind(id)
             .execute(&self.pool)
             .await?;
+        Ok(())
+    }
+
+    /// Финализировать загрузку: метка завершения + путь/размер файла.
+    /// Вызывается вместо старой пары `add_history` + `delete_task` — та же
+    /// строка в downloads становится записью галереи (state='completed').
+    pub async fn finalize_download(
+        &self,
+        id: &str,
+        file_path: &str,
+        file_size: Option<i64>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE downloads SET state = 'completed', progress = 100.0, error = NULL,
+             file_path = ?, file_size = ?, updated_at = unixepoch() WHERE id = ?",
+        )
+        .bind(file_path)
+        .bind(file_size)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 }

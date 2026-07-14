@@ -4,6 +4,8 @@
   import { formatDuration, formatBytes } from '$lib/utils/format'
   import { store, updateSetting } from '$lib/stores/settings.svelte'
   import { dl } from '$lib/stores/download.svelte'
+  import { queue } from '$lib/stores/queue.svelte'
+  import { pushToast } from '$lib/stores/toast.svelte'
   import { tooltip } from '$lib/utils/tooltip'
 
   import type { Route } from '$lib/bridge/types'
@@ -22,8 +24,17 @@
     if (dir) await updateSetting('download_dir', dir)
   }
   import { emitThought } from '$lib/stores/thought.svelte'
-  import { onMount } from 'svelte'
+  import { onMount, onDestroy, tick } from 'svelte'
   import type { VideoInfo, VideoFormat } from '$lib/bridge/types'
+
+  // Максимальный fps среди всех форматов видео (реальный fps источника)
+  function calcSourceFps(info: VideoInfo | null): number | null {
+    if (!info) return null
+    const all = (info.formats ?? [])
+      .map(f => f.fps)
+      .filter((f): f is number => f != null && f > 0)
+    return all.length ? Math.max(...all) : null
+  }
 
   // ── Состояние живёт в сторе — сохраняется при навигации ───────────────────
 
@@ -59,27 +70,61 @@
   const urlType    = $derived(detectUrlType(dl.url))
   const urlValid   = $derived(isValidYoutubeUrl(dl.url))
   const canFetch   = $derived(urlValid && !dl.loading)
+  // Если у выбранного формата есть информация о fps — он обязан быть выбран
+  const needsFps = $derived(
+    !!dl.info && dl.quality !== ''
+    && (dl.info.formats ?? []).some(f => f.format_id === dl.quality && (f.fps ?? 0) > 0)
+  )
+
+  // Все параметры обязательны: качество, fps, контейнер, кодек.
+  // Если хоть один не выбран — кнопка «Скачать» заблокирована.
   const canDownload = $derived(
     !!dl.info && !!dl.quality
     && !dl.queuing && !dl.queued
     && (dl.format === 'audio' ? !!dl.audioCodec : !!dl.videoCodec)
     && (dl.format === 'video' ? !!dl.audioCodec : true)
-    && (dl.format === 'audio' || dl.fps !== null || (() => {
-      if (!dl.quality) return true
-      const res = (dl.info?.formats ?? []).find(f => f.format_id === dl.quality)?.resolution ?? null
-      if (!res) return true
-      const fps = Math.max(...(dl.info?.formats ?? []).filter(f => f.resolution === res).map(f => f.fps ?? 0))
-      return fps <= 0
-    })())
+    && dl.container !== ''
+    && (!needsFps || dl.fps !== null)
   )
-
   let downloadShake = $state(false)
   let shakeQuality = $state(false)
+
+  // id таймеров — очищаем в onDestroy чтобы не стрелять после unmount
+  let shakeTimer: ReturnType<typeof setTimeout> | null = null
+  let queuedResetTimer: ReturnType<typeof setTimeout> | null = null
+  let g200PlayTimer: ReturnType<typeof setTimeout> | null = null
+
+  // Дебаунс авто-fetch + токен для отмены устаревших ответов (race-fix)
+  let fetchToken = 0
+  let fetchDebounce: ReturnType<typeof setTimeout> | null = null
+
+  // Состояние исчезновения карточки после скачивания
+  let leaving = $state(false)
+
+  async function startLeaveAnimation() {
+    leaving = true
+    await tick()
+    const items = document.querySelectorAll<HTMLElement>('.card-enter [data-leave]')
+    items.forEach(el => {
+      el.style.setProperty('--delay', `${Math.random() * 250}ms`)
+    })
+  }
+
+  onDestroy(() => {
+    if (shakeTimer) clearTimeout(shakeTimer)
+    if (queuedResetTimer) clearTimeout(queuedResetTimer)
+    if (g200PlayTimer) clearTimeout(g200PlayTimer)
+    if (fetchDebounce) clearTimeout(fetchDebounce)
+    // Очищаем все pending debounce-таймеры сохранения настроек
+    saveTimers.forEach(id => clearTimeout(id))
+    saveTimers.clear()
+  })
 
   function triggerShake() {
     downloadShake = true
     if (!dl.quality) shakeQuality = true
-    setTimeout(() => { downloadShake = false; shakeQuality = false }, 500)
+    if (shakeTimer) clearTimeout(shakeTimer)
+    shakeTimer = setTimeout(() => { downloadShake = false; shakeQuality = false }, 500)
   }
 
   // Реакция оркестратора на неправильную ссылку (один раз при появлении)
@@ -223,9 +268,13 @@
   }
   const AUDIO_COMPAT: Record<string, string[]> = {
     mp4:  ['aac', 'mp3', 'ac3'],
+    mp3:  ['mp3'],
+    m4a:  ['aac', 'mp3', 'ac3'],
+    opus: ['opus'],
     mkv:  ['aac', 'opus', 'mp3', 'flac', 'ac3'],
     webm: ['opus'],
     mov:  ['aac', 'mp3', 'flac', 'ac3'],
+    flac: ['flac'],
   }
 
   function isVideoCodecOk(codecId: string | null) {
@@ -266,6 +315,7 @@
   const fpsOptions = $derived(
     maxFps > 0 ? [60, 30, 24].filter(f => f <= maxFps) : []
   )
+  // Автоматически выставляем максимальный fps при выборе качества
 
   const audioFormats = $derived(
     (dl.info?.formats ?? [])
@@ -427,6 +477,11 @@
     }
   }
 
+  // Выбрать fps по умолчанию — максимальный доступный для выбранного разрешения
+  function pickDefaultFps() {
+    dl.fps = maxFps > 0 ? maxFps : null
+  }
+
   // Выбрать качество по умолчанию с учётом настроек пользователя
   function pickDefaultQuality() {
     dl.bitrate = null
@@ -473,36 +528,45 @@
   $effect(() => {
     if (isGruz200 && !wasGruz200) {
       emitThought('...', 'muted', 2)
-      setTimeout(() => g200video?.play().catch(() => {}), 50)
+      if (g200PlayTimer) clearTimeout(g200PlayTimer)
+      g200PlayTimer = setTimeout(() => { g200PlayTimer = null; g200video?.play().catch(() => {}) }, 50)
     }
     wasGruz200 = isGruz200
   })
 
   const rejected = $derived(dl.url && !urlValid && !dl.loading && !isMuriko && !isGruz200 ? classifyRejectedUrl(dl.url) : null)
 
-  // Автозапуск анализа при изменении валидного URL
+  // Автозапуск анализа при изменении валидного URL (с дебаунсом 600мс)
   $effect(() => {
-    if (dl.url !== dl.lastFetchedUrl) dl.error = null
-    if (!urlValid && dl.url) { dl.info = null; dl.quality = '' }
-    if (urlValid && dl.url !== dl.lastFetchedUrl && !dl.loading) {
-      fetchInfo()
+    const url = dl.url
+    if (url !== dl.lastFetchedUrl) dl.error = null
+    if (!urlValid && url) { dl.info = null; dl.sourceFps = null; dl.quality = '' }
+    if (urlValid && url !== dl.lastFetchedUrl) {
+      if (fetchDebounce) clearTimeout(fetchDebounce)
+      fetchDebounce = setTimeout(() => runFetch(url), 600)
     }
   })
 
   // ── Действия ───────────────────────────────────────────────────────────────
 
-  async function fetchInfo() {
-    if (!canFetch) return
-    const prevQuality = dl.quality
-    dl.loading = true; dl.error = null; dl.info = null; dl.quality = ''
-    dl.lastFetchedUrl = dl.url
+  // Анализ конкретного URL. token защищает от устаревших ответов (race при очистке).
+  async function runFetch(url: string) {
+    if (!isValidYoutubeUrl(url)) return
+    const token = ++fetchToken
+    dl.loading = true; dl.error = null; dl.quality = ''
+    dl.lastFetchedUrl = url
     try {
-      dl.info = await commands.fetchInfo(dl.url)
-      dl.quality = prevQuality
+      const info = await commands.fetchInfo(url)
+      if (token !== fetchToken) return // пришёл более новый запрос — игнорируем
+      dl.info = info
+      dl.sourceFps = calcSourceFps(info)
       pickDefaultQuality()
+      pickDefaultFps()
       pickDefaultCodecs()
     } catch (e: unknown) {
+      if (token !== fetchToken) return
       dl.error = e instanceof Error ? e.message : String(e)
+      commands.logFrontend(dl.error, 'error').catch(() => {})
       startEmojiTimer()
       const phrases: [string, string][] = [
         ['не вышло.', 'error'], ['ошибка.', 'error'],
@@ -513,8 +577,20 @@
       const [t, c] = phrases[Math.floor(Math.random() * phrases.length)]
       emitThought(t, c, 2)
     } finally {
-      dl.loading = false
+      if (token === fetchToken) dl.loading = false
     }
+  }
+
+  // Публичная «Получить информацию» (кнопка/Enter/повтор)
+  function fetchInfo() {
+    runFetch(dl.url)
+  }
+
+  // Отмена анализа: инвалидируем текущий запрос и снимаем спиннер.
+  // Полного abort invoke нет — прилетающий результат просто игнорируется по токену.
+  function cancelFetch() {
+    fetchToken++
+    dl.loading = false
   }
 
   async function startDownload() {
@@ -527,11 +603,12 @@
     dl.queuing = true
     dl.queueError = null
     try {
-      await commands.startDownload({
+      const task = await commands.startDownload({
         url: dl.info.url,
         format: dl.format,
         quality: dl.quality,
         fps: dl.fps,
+        source_fps: dl.sourceFps,
         bitrate: dl.bitrate,
         container: dl.container,
         title: dl.info.title ?? null,
@@ -542,10 +619,33 @@
         audio_codec: dl.audioCodec,
         video_codec: dl.videoCodec,
       })
+      pushToast({
+        type: 'success',
+        title: 'Добавлено в очередь',
+        message: dl.info.title ?? 'Загрузка начнётся автоматически',
+        duration: 4500,
+        actionLabel: 'В галерею',
+        onAction: () => { route = 'gallery' },
+      })
       dl.queued = true
-      setTimeout(() => { dl.queued = false; clearUrl() }, 1800)
+      // Запускаем анимацию исчезновения карточки (card-leave на [data-leave]),
+      // пока форма ещё в DOM. Таймер ниже чистит её уже после завершения анимации.
+      startLeaveAnimation()
+      queuedResetTimer = setTimeout(() => {
+        dl.queued = false
+        // Сбрасываем форму под следующую ссылку.
+        dl.url = ''
+        dl.info = null
+        dl.sourceFps = null
+        dl.quality = ''
+        dl.audioCodec = null
+        dl.videoCodec = null
+        dl.lastFetchedUrl = ''
+        lastRejectedUrl = ''
+      }, 650)
     } catch (e) {
       dl.queueError = e instanceof Error ? e.message : String(e)
+      commands.logFrontend(dl.queueError, 'error').catch(() => {})
     } finally {
       dl.queuing = false
     }
@@ -574,7 +674,7 @@
   }
 
   function clearUrl() {
-    dl.url = ''; dl.info = null; dl.error = null; dl.queueError = null; dl.quality = ''; dl.audioCodec = null; dl.videoCodec = null; dl.lastFetchedUrl = ''; lastRejectedUrl = ''
+    dl.url = ''; dl.info = null; dl.sourceFps = null; dl.error = null; dl.queueError = null; dl.quality = ''; dl.audioCodec = null; dl.videoCodec = null; dl.lastFetchedUrl = ''; lastRejectedUrl = ''
   }
 
   function setFormat(f: string) {
@@ -585,7 +685,7 @@
     } else {
       if (!['mp4','mkv','webm','mov'].includes(dl.container)) dl.container = 'mp4'
     }
-    if (dl.info) pickDefaultQuality()
+    if (dl.info) { pickDefaultQuality(); pickDefaultFps() }
   }
 
   const urlTypeLabels: Record<string, string> = {
@@ -639,11 +739,80 @@
     return chars
   }
 
-  interface ErrorInfo { title: string; hint: string }
+  interface ErrorInfo {
+    title: string
+    hint: string
+    openSettings?: boolean
+    command?: string
+    detail?: string
+  }
+
+  let applying = $state(false)
+  async function applyCookies() {
+    if (applying) return
+    applying = true
+    try {
+      const current = store.settings?.ytdlp_extra_args ?? ''
+      const arg = '--cookies-from-browser chrome'
+      // Не дублируем, если уже задано
+      const next = current.includes('--cookies-from-browser')
+        ? current
+        : (current.trim() ? `${current.trim()} ${arg}` : arg)
+      if (next !== current) {
+        await updateSetting('ytdlp_extra_args', next)
+      }
+      pushToast({ type: 'info', message: 'Куки браузера применены — проверяю ссылку…' })
+      await fetchInfo()
+    } finally {
+      applying = false
+    }
+  }
+
+  async function applyCookiesFile() {
+    if (applying) return
+    applying = true
+    try {
+      const p = await commands.pickFile([
+        { name: 'Cookies', extensions: ['txt'] },
+      ])
+      if (!p) {
+        applying = false
+        return
+      }
+      // Путь в кавычках — парсер extra_args учитывает пробелы в пути
+      const arg = `--cookies "${p}"`
+      const current = store.settings?.ytdlp_extra_args ?? ''
+      // Убираем старые --cookies / --cookies-from-browser, чтобы не конфликтовали
+      const cleaned = current
+        .replace(/--cookies-from-browser\s+\S+/g, '')
+        .replace(/--cookies\s+"[^"]*"/g, '')
+        .replace(/--cookies\s+\S+/g, '')
+        .trim()
+      const next = cleaned ? `${cleaned} ${arg}` : arg
+      await updateSetting('ytdlp_extra_args', next)
+      pushToast({ type: 'info', message: 'Файл cookies применён — проверяю ссылку…' })
+      await fetchInfo()
+    } finally {
+      applying = false
+    }
+  }
 
   function classifyError(msg: string): ErrorInfo {
     const m = msg.toLowerCase()
-    if (m.includes('private') || m.includes('sign in') || m.includes('unavailable'))
+    // Защита от ботов YouTube — отдельно от реального гео/приватности.
+    // Сообщение вида «Sign in to confirm you're not a bot» содержит 'sign in',
+    // но это НЕ приватность и НЕ блок региона.
+    if (m.includes('confirm you') || m.includes("not a bot") || m.includes('bot'))
+      return {
+        title: 'YouTube заблокировал запрос',
+        hint: 'YouTube принял запрос за бота. Укажите команду ниже в Настройках (браузер должен быть закрыт).',
+        openSettings: true,
+        command: '--cookies-from-browser chrome',
+        detail: msg,
+      }
+    if (m.includes('private'))
+      return { title: 'Видео приватное', hint: 'Это видео доступно только его владельцу или по ссылке.' }
+    if (m.includes('sign in') || m.includes('unavailable'))
       return { title: 'Видео недоступно', hint: 'Видео приватное или заблокировано в вашем регионе.' }
     if (m.includes('not found') || m.includes('does not exist') || m.includes('removed'))
       return { title: 'Видео не найдено', hint: 'Видео было удалено или ссылка неправильная.' }
@@ -664,8 +833,10 @@
 <div class="page">
   <!-- URL bar -->
   <div class="url-bar" class:valid={urlValid} class:loading={dl.loading}>
-    <span class="url-icon" class:lit={urlValid}>
-      {#if urlType !== 'unknown' && urlValid}
+    <span class="url-icon" class:lit={urlValid} class:loading={dl.loading}>
+      {#if dl.loading}
+        <svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+      {:else if urlType !== 'unknown' && urlValid}
         {#if urlType === 'music'}
           <!-- YouTube Music логотип -->
           <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm0 14.5a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9zm0-7a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/></svg>
@@ -696,13 +867,15 @@
       </button>
     {/if}
 
-    <button class="btn-fetch" onclick={fetchInfo} disabled={!canFetch} aria-label="Получить информацию">
-      {#if dl.loading}
-        <svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-      {:else}
+    {#if dl.loading}
+      <button class="btn-fetch btn-fetch-cancel" onclick={cancelFetch} aria-label="Отменить анализ">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    {:else}
+      <button class="btn-fetch" onclick={fetchInfo} disabled={!canFetch} aria-label="Получить информацию">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-      {/if}
-    </button>
+      </button>
+    {/if}
   </div>
 
   <!-- Muriko easter egg -->
@@ -780,16 +953,33 @@
       {/key}
       <p class="error-title">{e.title}</p>
       <p class="error-hint">{e.hint}</p>
-      <button class="error-retry" onclick={fetchInfo}>попробовать снова</button>
+      {#if e.command}
+        <div class="error-cmd-group">
+          <button class="error-cmd" onclick={applyCookies} disabled={applying}>
+            <code>{e.command}</code>
+            <span class="copy-tag">применить</span>
+          </button>
+          <button class="error-cmd error-cmd-file" onclick={applyCookiesFile} disabled={applying}>
+            выбрать файл cookies.txt
+          </button>
+        </div>
+      {/if}
+      {#if e.detail}
+        <p class="error-detail">{e.detail}</p>
+      {/if}
+      <div class="error-actions">
+        <button class="error-retry" onclick={fetchInfo}>попробовать снова</button>
+        {#if e.openSettings}
+          <button class="error-settings" onclick={() => (route = 'settings')}>
+            открыть настройки
+          </button>
+        {/if}
+      </div>
     </div>
   {/if}
 
   <!-- Skeleton -->
   {#if dl.loading}
-    <div class="analyzing-badge">
-      <svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-      Анализ ссылки...
-    </div>
     <div class="preview-grid skeleton-grid">
       <div class="thumb-card">
         <div class="thumb-skeleton shimmer"></div>
@@ -816,28 +1006,34 @@
 
   <!-- Видео карточка -->
   {#if dl.info && !dl.loading}
-    <div class="preview-grid fadein">
-      <!-- Превью -->
-      <div class="thumb-card">
-        <div class="thumb-wrap">
-          {#if dl.info.thumbnail}
-            <img src={dl.info.thumbnail} alt={dl.info.title ?? 'Превью видео'} />
-          {:else}
-            <div class="thumb-placeholder"></div>
+    <div class:leaving class="card-enter">
+      <div class="preview-grid">
+        <!-- Превью -->
+        <div class="thumb-card" data-leave>
+          <div class="thumb-wrap">
+            {#if dl.info.thumbnail}
+              <img src={dl.info.thumbnail} alt={dl.info.title ?? 'Превью видео'} />
+            {:else}
+              <div class="thumb-placeholder"></div>
+            {/if}
+          </div>
+          {#if dl.info.duration}
+            <div class="duration-badge">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              {formatDuration(dl.info.duration)}
+            </div>
           {/if}
         </div>
-        {#if dl.info.duration}
-          <div class="duration-badge">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-            {formatDuration(dl.info.duration)}
-          </div>
-        {/if}
-      </div>
 
       <!-- Правая колонка: мета + тогл -->
       <div class="right-col">
       <!-- Мета -->
-      <div class="info-card">
+      <div class="info-card" data-leave
+        data-item-type="video-info"
+        data-url={dl.info.url || undefined}
+        data-title={dl.info.title || undefined}
+        data-uploader-url={dl.info.uploader_url || undefined}
+      >
         {#if dl.info.channel}
           <button class="channel-row" onclick={() => dl.info?.uploader_url && commands.openUrl(dl.info.uploader_url)} disabled={!dl.info?.uploader_url}>
             <div class="channel-avatar">
@@ -882,7 +1078,7 @@
       </div>
 
       <!-- Тогл под карточкой описания -->
-      <div class="format-toggle">
+      <div class="format-toggle" data-leave>
         <button class:active={dl.format === 'video'} onclick={() => setFormat('video')}
           use:tooltip={'Видео + аудио в одном файле'}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
@@ -906,7 +1102,7 @@
     <div class="options">
       <!-- Качество -->
       {#if dl.format === 'video' || dl.format === 'video_only'}
-        <div class="quality-grid" class:shake={shakeQuality}>
+        <div class="quality-grid" class:shake={shakeQuality} data-leave>
           {#each videoFormats as f (f.format_id)}
             <button
               class="quality-card"
@@ -916,7 +1112,7 @@
                 const id = bestFormatId(f.resolution)
                 const sameRes = allVideoFormats.filter(fmt => fmt.resolution === f.resolution).some(fmt => fmt.format_id === dl.quality)
                 if (dl.quality === id || sameRes) { dl.quality = ''; dl.fps = null; dl.bitrate = null }
-                else { dl.quality = id; dl.fps = null; dl.bitrate = null }
+                else { dl.quality = id; pickDefaultFps(); dl.bitrate = null }
               }}
             >
               <span class="q-value">{qualityLabel(f)}</span>
@@ -926,7 +1122,7 @@
 
         <!-- FPS — только если есть варианты -->
         {#if fpsOptions.length > 0}
-          <div class="fps-grid">
+          <div class="fps-grid" data-leave>
             {#each fpsOptions as f}
               <button
                 class="quality-card"
@@ -951,14 +1147,14 @@
           mkv:  'MKV — без ограничений по кодекам. Не все SmartTV и консоли.',
           mov:  'MOV (QuickTime) — контейнер Apple. Нужен для ProRes.',
         }}
-        <div class="container-grid">
+        <div class="container-grid" data-leave>
           {#each ['mp4','webm','mkv','mov'] as c}
             <button
               class="quality-card"
               class:selected={dl.container === c}
               aria-pressed={dl.container === c}
               use:tooltip={containerDescs[c]}
-              onclick={() => dl.container = dl.container === c ? '' : c}
+              onclick={() => dl.container = c}
             >
               <span class="q-value">{c.toUpperCase()}</span>
             </button>
@@ -967,7 +1163,7 @@
 
         <!-- Видео-кодек -->
         {#if dl.format === 'video' || dl.format === 'video_only'}
-        <div class="codec-row">
+        <div class="codec-row" data-leave>
           <span class="codec-label">Видео</span>
           <div class="codec-cards-grid">
           {#each VIDEO_CODECS as codec}
@@ -999,7 +1195,7 @@
 
         <!-- Аудио-кодек — только при видео со звуком -->
         {#if dl.format === 'video'}
-        <div class="codec-row">
+        <div class="codec-row" data-leave>
           <span class="codec-label">Аудио</span>
           <div class="codec-cards-grid">
           {#each AUDIO_CODECS as codec}
@@ -1027,7 +1223,7 @@
         </div>
         {/if}
       {:else}
-        <div class="quality-grid">
+        <div class="quality-grid" data-leave>
           {#each audioFormats as f (f.format_id)}
             <button
               class="quality-card"
@@ -1048,33 +1244,40 @@
           mp3:  'MP3 — универсальный. Поддерживается везде включая старые устройства.',
           m4a:  'M4A — AAC в MP4-контейнере. Лучшее качество при том же размере.',
           opus: 'Opus — открытый кодек IETF. Лучший lossy при низком битрейте.',
+          flac: 'FLAC — lossless без потерь. Файл в 3–5× больше AAC.',
         }}
-        <div class="container-grid">
-          {#each ['mp3','m4a','opus'] as c}
+        <div class="container-grid" data-leave>
+          {#each ['mp3','m4a','opus','flac'] as c}
             <button
               class="quality-card"
               class:selected={dl.container === c}
               aria-pressed={dl.container === c}
               use:tooltip={audioContainerDescs[c]}
-              onclick={() => dl.container = dl.container === c ? '' : c}
+              onclick={() => dl.container = c}
             >
               <span class="q-value">{c.toUpperCase()}</span>
             </button>
           {/each}
         </div>
 
-        <!-- Аудио-кодек -->
-        <div class="codec-cards-grid">
+        <!-- Аудио-кодек (логика как в режиме «видео со звуком») -->
+        <div class="codec-cards-grid" data-leave>
           {#each AUDIO_CODECS as codec}
+            {@const ok = isAudioCodecOk(codec.id)}
             <button
               class="quality-card codec-card"
               class:selected={dl.audioCodec === codec.id}
+              class:incompatible={!ok}
               aria-pressed={dl.audioCodec === codec.id}
               onmouseenter={(e) => onCodecEnter(e, codec)}
               onmouseleave={onCodecLeave}
               onclick={() => {
-                if (dl.audioCodec === codec.id) { dl.audioCodec = null }
-                else { dl.audioCodec = codec.id }
+                if (dl.audioCodec === codec.id) { dl.audioCodec = null; return }
+                dl.audioCodec = codec.id
+                if (!isAudioCodecOk(codec.id)) {
+                  const compatible = Object.entries(AUDIO_COMPAT).find(([, v]) => v.includes(codec.id))
+                  if (compatible) dl.container = compatible[0]
+                }
               }}
             >
               <span class="q-value">{codec.label}</span>
@@ -1088,7 +1291,7 @@
         {@const isDisabled = maxBitrate === 0}
         {@const pct = maxBitrate > 0 ? (currentBitrate - minBitrate) / (maxBitrate - minBitrate) * 100 : 100}
         {@const bitrateQuality = pct >= 80 ? 'высокое' : pct >= 40 ? 'среднее' : 'низкое'}
-        <div class="bitrate-card" class:bitrate-disabled={isDisabled}>
+        <div class="bitrate-card" class:bitrate-disabled={isDisabled} data-leave>
           {#if !isDisabled}
             <div class="bitrate-track-wrap">
               <input
@@ -1121,7 +1324,7 @@
       {/if}
 
       <!-- Кнопка скачать -->
-      <div class="action-row">
+      <div class="action-row" data-leave>
         <div class="size-info">
           <div class="size-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -1192,7 +1395,9 @@
         {/if}
       </div>
     </div>
+    </div>
   {/if}
+
 </div>
 
 {#if codecTipData}
@@ -1226,7 +1431,7 @@
   }
   .url-bar:focus-within {
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
   }
   .url-bar.valid { border-color: var(--border-strong); }
   .url-bar.loading { opacity: 0.75; }
@@ -1253,21 +1458,33 @@
   }
   .btn-clear svg { width: 12px; height: 12px; }
   .btn-clear:hover { background: rgba(255,255,255,0.08); color: var(--text-secondary); }
+  /* Кнопка анализа — вторичная (нейтральная) */
   .btn-fetch {
     width: 38px; height: 38px; margin-left: 4px; flex-shrink: 0;
     display: grid; place-items: center;
-    background: linear-gradient(135deg, var(--accent), var(--accent-warm));
-    border: none; border-radius: var(--radius-card); color: var(--text-primary); cursor: pointer;
-    transition: filter var(--transition-default), transform var(--transition-fast), box-shadow var(--transition-default);
+    background: var(--bg-overlay);
+    border: 1px solid var(--border-default); border-radius: var(--radius-card); color: var(--text-secondary); cursor: pointer;
+    transition: background var(--transition-default), color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
   }
   .btn-fetch svg { width: 14px; height: 14px; }
   .btn-fetch:hover:not(:disabled) {
-    filter: brightness(1.1);
-    box-shadow: 0 4px 18px color-mix(in srgb, var(--accent) 40%, transparent);
+    background: var(--bg-elevated); color: var(--text-primary);
+    border-color: var(--border-strong);
     transform: translateY(-1px);
   }
   .btn-fetch:active:not(:disabled) { transform: scale(0.96); }
   .btn-fetch:disabled { opacity: 0.25; cursor: default; }
+  /* Отмена анализа */
+  .btn-fetch-cancel {
+    background: color-mix(in srgb, var(--status-error) 14%, transparent);
+    border-color: color-mix(in srgb, var(--status-error) 40%, transparent);
+    color: var(--status-error);
+  }
+  .btn-fetch-cancel:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--status-error) 22%, transparent);
+    color: var(--status-error);
+    border-color: color-mix(in srgb, var(--status-error) 60%, transparent);
+  }
 
   /* ── Error full-page ── */
   .g200-wrap {
@@ -1362,14 +1579,98 @@
     background: rgba(255,255,255,0.09);
     color: var(--text-primary);
   }
-
-  /* ── Analyzing badge ── */
-  .analyzing-badge {
-    display: flex; align-items: center; gap: var(--space-2);
-    font-size: var(--text-sm); color: var(--status-info);
-    margin-top: var(--space-4); animation: fadeUp 0.3s ease both;
+  .error-actions {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    animation: fadeUp 0.35s 0.3s ease both;
   }
-  .analyzing-badge svg { width: 14px; height: 14px; }
+  .error-settings {
+    padding: 9px 22px;
+    background: var(--accent);
+    border: none;
+    border-radius: var(--radius-card);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent-text, #fff);
+    cursor: pointer;
+    transition: filter var(--transition-fast), transform var(--transition-fast);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.18);
+  }
+  .error-settings:hover {
+    filter: brightness(1.08);
+  }
+  .error-settings:active {
+    transform: translateY(1px);
+  }
+  .error-cmd-group {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    animation: fadeUp 0.35s 0.28s ease both;
+  }
+  .error-cmd {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--bg-input, rgba(0,0,0,0.3));
+    border: 1px solid var(--border, rgba(255,255,255,0.12));
+    border-radius: var(--radius-card);
+    cursor: pointer;
+    transition: border-color var(--transition-fast), background var(--transition-fast);
+  }
+  .error-cmd:hover:not(:disabled) {
+    border-color: var(--accent);
+    background: var(--bg-input-hover, rgba(0,0,0,0.4));
+  }
+  .error-cmd:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+  .error-cmd code {
+    font-family: var(--font-mono, ui-monospace, 'Cascadia Code', Consolas, monospace);
+    font-size: 12.5px;
+    color: var(--text-primary);
+    letter-spacing: 0.2px;
+    text-align: left;
+    word-break: break-all;
+  }
+  .error-cmd .copy-tag {
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .error-cmd-file {
+    justify-content: center;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+  .error-detail {
+    margin: 10px 0 0;
+    padding: 8px 10px;
+    background: rgba(0,0,0,0.3);
+    border-left: 2px solid var(--accent);
+    border-radius: 4px;
+    font-family: var(--font-mono, ui-monospace, 'Cascadia Code', Consolas, monospace);
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--text-muted, #999);
+    word-break: break-word;
+    white-space: pre-wrap;
+    animation: fadeUp 0.35s 0.32s ease both;
+  }
+
+
 
   /* ── Shimmer skeleton ── */
   .shimmer {
@@ -1406,7 +1707,7 @@
     align-items: stretch;
   }
   .right-col { display: flex; flex-direction: column; justify-content: space-between; gap: 10px; }
-  .fadein { animation: fadein 0.3s cubic-bezier(0.4,0,0.2,1); }
+  .card-enter { animation: fadein 0.3s cubic-bezier(0.4,0,0.2,1); }
   @keyframes fadein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
   /* Превью */
@@ -1493,7 +1794,7 @@
   .info-actions button:hover { background: var(--border-subtle); color: var(--text-primary); border-color: var(--border-strong); }
 
   /* ── Options ── */
-  .options { display: flex; flex-direction: column; gap: 14px; margin-top: 6px; flex: 1; }
+  .options { display: flex; flex-direction: column; gap: 14px; margin-top: 18px; flex: 1; }
 
   /* Format toggle */
   .format-toggle {
@@ -1558,7 +1859,7 @@
     color: var(--text-primary); line-height: 1;
   }
   .q-desc {
-    font-size: 9px; font-weight: 600; color: var(--border-strong);
+    font-size: 9px; font-weight: 600; color: var(--text-tertiary);
     letter-spacing: 0.04em; text-transform: uppercase;
     text-align: center; line-height: 1.3;
   }
@@ -1623,11 +1924,11 @@
   }
   .size-badge svg { width: 11px; height: 11px; opacity: 0.6; flex-shrink: 0; }
   .size-badge-main { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; color: var(--text-primary); background: var(--bg-overlay); padding: 5px 12px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.6), inset 0 -1px 1px rgba(255,255,255,0.03); }
-  .free-space { font-size: 10px; color: rgba(255,255,255,0.3); font-weight: 500; letter-spacing: 0.02em; cursor: pointer; transition: color var(--transition-fast); }
-  .free-space:hover { color: rgba(255,255,255,0.6); }
+  .free-space { font-size: 10px; color: var(--text-tertiary); font-weight: 500; letter-spacing: 0.02em; cursor: pointer; transition: color var(--transition-fast); }
+  .free-space:hover { color: var(--text-secondary); }
   .size-badges { display: flex; gap: 5px; margin-left: auto; flex-shrink: 0; }
-  .size-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.4); background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); padding: 5px 4px; letter-spacing: 0.04em; text-transform: uppercase; transition: all var(--transition-default); box-shadow: none; }
-  .size-badge:hover { color: rgba(255,255,255,1); background: rgba(0,0,0,0.35); padding: 5px 12px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.6), inset 0 -1px 1px rgba(255,255,255,0.03); }
+  .size-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; color: var(--text-secondary); background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); padding: 5px 4px; letter-spacing: 0.04em; text-transform: uppercase; transition: all var(--transition-default); box-shadow: none; }
+  .size-badge:hover { color: var(--text-primary); background: rgba(0,0,0,0.35); padding: 5px 12px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.6), inset 0 -1px 1px rgba(255,255,255,0.03); }
 
   @keyframes shake {
     0%, 100% { transform: translateX(0); }
@@ -1642,23 +1943,22 @@
   .btn-download {
     height: 58px; padding: 0 36px;
     display: flex; align-items: center; gap: 10px;
-    background: var(--bg-overlay);
-    border: 1px solid rgba(0,0,0,1); border-radius: var(--radius-lg);
+    background: linear-gradient(135deg, var(--accent), var(--accent-warm));
+    border: 1px solid transparent; border-radius: var(--radius-lg);
     color: var(--text-primary); font-size: 14px; font-weight: 700;
     cursor: pointer; white-space: nowrap; letter-spacing: 0.02em;
     transition: filter var(--transition-default), box-shadow var(--transition-default), transform var(--transition-fast);
     position: relative;
-    box-shadow: inset 0 1px 0 rgba(120,120,120,0.5), inset 0 -1px 0 rgba(80,80,80,0.15);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.25), 0 6px 20px color-mix(in srgb, var(--accent) 35%, transparent);
   }
   .btn-download svg { width: 15px; height: 15px; }
   .btn-download:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--accent) 13%, transparent);
-    border-color: color-mix(in srgb, var(--accent) 80%, transparent);
-    box-shadow: 0 0 20px color-mix(in srgb, var(--accent) 15%, transparent), inset 0 1px 0 color-mix(in srgb, var(--accent) 15%, transparent);
+    filter: brightness(1.08);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.3), 0 8px 26px color-mix(in srgb, var(--accent) 50%, transparent);
     transform: translateY(-1px);
   }
-  .btn-download:active:not(:disabled) { transform: scale(0.97); }
-  .btn-download:disabled { opacity: 0.25; cursor: default; box-shadow: none; }
+  .btn-download:active:not(:disabled) { transform: scale(0.97); filter: brightness(0.96); }
+  .btn-download:disabled { opacity: 0.4; cursor: default; box-shadow: none; filter: grayscale(0.3); }
   .queue-error {
     margin: 0; font-size: 11px; color: var(--accent); text-align: center; max-width: 240px;
   }
@@ -1742,6 +2042,19 @@
   
   
 
+  /* ── Живые карточки активных загрузок ── */
+  /* Исчезновение карточки после скачивания — шум (случайный порядок) */
+  .leaving [data-leave] {
+    animation: card-leave 0.3s ease-in forwards;
+    animation-delay: var(--delay, 0ms);
+    pointer-events: none;
+  }
+  @keyframes card-leave {
+    to {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+  }
   /* Animations */
   .spin { animation: spin 0.75s linear infinite; }
   @keyframes spin    { to { transform: rotate(360deg); } }
@@ -1770,6 +2083,7 @@
     border-radius: var(--radius-card);
   }
   .channel-row:disabled { cursor: default; pointer-events: none; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
 }
