@@ -18,7 +18,14 @@
 {#if activeDownloads.length > 0}
   <div class="column">
     {#each activeDownloads.slice(0, 8) as task (task.id)}
-      <div class="item" title="{task.title ?? task.url} — {task.progress.toFixed(0)}%">
+      <div class="item"
+        data-item-type="task"
+        data-item-id={task.id}
+        data-url={task.url || undefined}
+        data-title={task.title || undefined}
+        data-task-state={task.state}
+        title="{task.title ?? task.url} — {task.progress.toFixed(0)}%"
+      >
         <div class="thumb" style="background:{taskGradient(task.id)}">
           {#if task.thumbnail}
             <img src={task.thumbnail} alt="" />

@@ -1,5 +1,7 @@
 use crate::error::Result;
 use futures_util::StreamExt;
+use sha2::{Digest, Sha256};
+use std::io::Read;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
@@ -44,6 +46,13 @@ pub async fn install_version(url: String, app: AppHandle) -> Result<()> {
 
     // Скачиваем — при ошибке чистим неполный файл.
     if let Err(e) = download(&url, &tmp, &app).await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(e);
+    }
+
+    // Сверяем контрольную сумму, если она опубликована (защита от MITM/битого файла).
+    // Для старых релизов без .sha256 проверка пропускается — установка не блокируется.
+    if let Err(e) = verify_checksum(&url, &tmp, &app).await {
         let _ = tokio::fs::remove_file(&tmp).await;
         return Err(e);
     }
@@ -180,5 +189,75 @@ fn launch_installer(tmp: &std::path::Path, app: &AppHandle) -> Result<()> {
             done: true,
         },
     );
+    Ok(())
+}
+
+fn sha256_file(path: &std::path::Path) -> Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+// Сверяет SHA256 скачанного установщика с опубликованным файлом `<exe>.sha256`.
+// Если файл контрольной суммы недоступен (старые релизы) или некорректен —
+// проверка пропускается, установка не блокируется. Блокируем только при
+// реальном НЕсовпадении (файл повреждён при скачивании или подменён).
+async fn verify_checksum(exe_url: &str, tmp: &std::path::Path, _app: &AppHandle) -> Result<()> {
+    let checksum_url = format!("{}.sha256", exe_url);
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| anyhow::anyhow!("не удалось создать HTTP-клиент: {e}"))?;
+
+    let resp = match client.get(&checksum_url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("контрольная сумма недоступна, проверка пропущена: {e}");
+            return Ok(());
+        }
+    };
+    if !resp.status().is_success() {
+        tracing::warn!(
+            "файл контрольной суммы отсутствует ({}), проверка пропущена",
+            resp.status()
+        );
+        return Ok(());
+    }
+
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| anyhow::anyhow!("не удалось прочитать контрольную сумму: {e}"))?;
+    // Формат sha256sum: "<hash>  <имя>" или просто "<hash>"
+    let expected = text
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+    if expected.len() != 64 || !expected.chars().all(|c| c.is_ascii_hexdigit()) {
+        tracing::warn!("некорректный формат контрольной суммы, проверка пропущена");
+        return Ok(());
+    }
+
+    let actual = sha256_file(tmp)?;
+    if actual != expected {
+        tracing::error!(
+            "контрольная сумма установщика НЕ совпала: ожидалось {expected}, получено {actual}"
+        );
+        return Err(crate::error::AppError::Other(anyhow::anyhow!(
+            "контрольная сумма не совпала: файл повреждён или подменён"
+        )));
+    }
+
+    tracing::info!("контрольная сумма установщика совпала");
     Ok(())
 }

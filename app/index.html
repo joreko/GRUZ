@@ -8,6 +8,18 @@
   </head>
   <body>
     <div id="app"></div>
+    <!-- Ранние ошибки (до монтирования Svelte) буферизуем в window,
+         чтобы App.svelte показал их через ErrorModal. Красный баннер убран. -->
+    <script>
+      window.__pendingCrash = null;
+      window.__gruzMounted = false;
+      function stash(type, err) {
+        if (window.__gruzMounted) return;
+        window.__pendingCrash = { type, text: err && err.stack ? err.stack : String(err) };
+      }
+      window.onerror = function (_m, _s, _l, _c, err) { stash('ERR', err); };
+      window.addEventListener('unhandledrejection', function (e) { stash('PROMISE', e.reason); });
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

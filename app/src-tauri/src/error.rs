@@ -28,6 +28,10 @@ impl serde::Serialize for AppError {
     where
         S: serde::Serializer,
     {
+        // Ловим все ошибки команд централизованно — каждая ошибка,
+        // дошедшая до фронта, попадает в лог независимо от того,
+        // логирует ли её конкретная команда явно.
+        tracing::error!("{self}");
         serializer.serialize_str(&self.to_string())
     }
 }

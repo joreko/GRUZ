@@ -14,11 +14,20 @@ pub async fn get_settings(orchestrator: State<'_, Arc<Mutex<Orchestrator>>>) -> 
 pub async fn update_settings(
     key: String,
     value: String,
+    silent: Option<bool>,
     orchestrator: State<'_, Arc<Mutex<Orchestrator>>>,
 ) -> Result<()> {
+    // silent=true (по умолчанию для программных сейвов: дефолтная папка при
+    // маунте, сохранение вида галереи, автосейв шаблонов) — без мысли.
+    // Мысль «обновил настройки» только когда пользователь реально поменял
+    // настройку в UI (SettingsPage шлёт silent=false).
+    let silent = silent.unwrap_or(true);
     let orch = orchestrator.lock().await;
+    let old = orch.db.get_setting(&key).await.ok().flatten();
     orch.db.update_setting(&key, &value).await?;
-    orch.thought_settings();
+    if !silent {
+        orch.thought_settings(&key, old.as_deref(), &value);
+    }
     drop(orch);
     if key == "max_concurrent" {
         match value.parse::<usize>() {
@@ -34,6 +43,14 @@ pub async fn update_settings(
         }
     }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn get_setting(
+    key: String,
+    orchestrator: State<'_, Arc<Mutex<Orchestrator>>>,
+) -> Result<Option<String>> {
+    orchestrator.lock().await.db.get_setting(&key).await
 }
 
 #[tauri::command]

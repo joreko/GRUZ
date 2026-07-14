@@ -34,7 +34,8 @@ export function formatDate(value: string | number): string {
 /** Читаемое описание параметров скачивания из элемента истории */
 export function formatParams(item: {
   format: string, quality: string, container: string,
-  fps?: number | null, video_codec?: string | null, audio_codec?: string | null,
+  fps?: number | null, source_fps?: number | null,
+  video_codec?: string | null, audio_codec?: string | null,
   file_size?: number | null
 }): string {
   const parts: string[] = []
@@ -42,8 +43,10 @@ export function formatParams(item: {
   const h = item.quality.match(/height=(\d+)/)?.[1]
   if (h) parts.push(`${h}p`)
   else if (item.format === 'audio') parts.push('аудио')
-  // FPS
-  if (item.fps && item.fps > 0) parts.push(`${item.fps}fps`)
+  // FPS — показываем реальный fps источника, если он известен;
+  // иначе падаем на выбранный лимит (для обратной совместимости)
+  const displayFps = item.source_fps ?? item.fps
+  if (displayFps && displayFps > 0) parts.push(`${displayFps}fps`)
   // Контейнер
   parts.push(item.container.toUpperCase())
   // Кодек (кратко)

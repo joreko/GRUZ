@@ -1,4 +1,5 @@
 use crate::error::Result;
+use crate::logging;
 use serde_json::json;
 use std::io::{Read, Seek, SeekFrom};
 
@@ -60,4 +61,30 @@ pub async fn upload_log() -> Result<String> {
         .to_string();
 
     Ok(url)
+}
+
+/// Меняет уровень логирования на лету (без перезапуска).
+/// `level` — директива фильтра, напр. `gruz=debug`, `gruz=trace`, `gruz=warn`, `off`.
+#[tauri::command]
+pub fn set_log_level(level: String) {
+    logging::set_log_level(level.trim());
+}
+
+/// Возвращает последние строки лога (кольцевой буфер) для живого просмотра.
+#[tauri::command]
+pub fn get_log_history() -> Vec<String> {
+    logging::get_log_history()
+}
+
+/// Логирует сообщение с фронта (тосты, пользовательские события) на бэкенде.
+/// `level` — один из: error, warn, info, debug, trace (по умолчанию info).
+#[tauri::command]
+pub fn log_frontend(message: String, level: Option<String>) {
+    match level.as_deref() {
+        Some("error") => tracing::error!("[frontend] {message}"),
+        Some("warn") => tracing::warn!("[frontend] {message}"),
+        Some("debug") => tracing::debug!("[frontend] {message}"),
+        Some("trace") => tracing::trace!("[frontend] {message}"),
+        _ => tracing::info!("[frontend] {message}"),
+    }
 }

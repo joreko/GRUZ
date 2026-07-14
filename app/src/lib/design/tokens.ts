@@ -9,6 +9,7 @@ export const color = {
     surface: '#161616',
     elevated: '#1e1e1e',
     overlay: '#252525',
+    selected: '#111111',
   },
   // Граница
   border: {
@@ -21,9 +22,10 @@ export const color = {
     primary: '#f0f0f0',
     secondary: '#a0a0a0',
     muted: '#606060',
+    tertiary: '#8a8a8a',
     inverse: '#0f0f0f',
   },
-  // Акцент
+  // Акцент — фирменный красный (CTA, выделение, активные элементы)
   accent: {
     default: '#e63946',
     hover: '#ff4d5a',
@@ -48,6 +50,21 @@ export const color = {
     info:    '#00e5ff',
     pink:    '#ff80cc',
     dash:    '#3f3f46',
+  },
+  // Полноэкранные сцены (лайтбокс) — сплошной чёрный холст
+  scrim: {
+    base:   '#000000',
+    soft:   '#0c0c0c',
+    overlay: 'rgba(0, 0, 0, 0.72)',
+  },
+  // Контент поверх scrim (кнопки навигации, крестик)
+  onScrim: '#ffffff',
+  // Тени (токенизированы, чтобы не хардкодить rgba в компонентах)
+  shadow: {
+    card:      '0 4px 20px rgba(0, 0, 0, 0.2)',
+    cardHover: '0 12px 32px rgba(0, 0, 0, 0.5)',
+    panel:     '0 24px 64px rgba(0, 0, 0, 0.6)',
+    menu:      '0 8px 32px rgba(0, 0, 0, 0.5)',
   },
 } as const
 

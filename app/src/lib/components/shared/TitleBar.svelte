@@ -4,7 +4,7 @@
   import { tooltip } from '$lib/utils/tooltip'
 
   import { onMount, onDestroy } from 'svelte'
-  import { onOrchestratorThought, type OrchestratorThought } from '$lib/bridge/events'
+  import { type OrchestratorThought } from '$lib/bridge/events'
   import { registerThoughtCallback } from '$lib/stores/thought.svelte'
   import {
     fetchChangelog,
@@ -28,26 +28,30 @@
 
   let unlistenResize: (() => void) | null = null
 
-  // ── Система мыслей ───────────────────────────────────────────────────────
-
-  // Семантические цвета → CSS-переменные дизайн-системы
-  const colorMap: Record<string, string> = {
+  // severity (новый контракт) → CSS-переменная дизайн-системы.
+  // Хардкод hex запрещён — только переменные из theme.css.
+  const severityColor: Record<string, string> = {
     muted:   'var(--thought-muted)',
     success: 'var(--thought-success)',
     error:   'var(--thought-error)',
-    warning: 'var(--thought-warning)',
+    warn:    'var(--thought-warning)',
     info:    'var(--thought-info)',
-    pink:    'var(--thought-pink)',
   }
 
-  interface QueueItem { text: string; color: string; priority: number }
+  interface QueueItem {
+    text: string
+    severity: string
+    kind: string
+    title: string | null
+    ts: number
+  }
 
   let displayText = $state('')
   let displayColor = $state('var(--thought-muted)')
   let showCursor = $state(false)
   let isAnimating = false  // true пока идёт typewriter или dwell
   let queue: QueueItem[] = []
-  let current: QueueItem | null = null
+  let current = $state<QueueItem | null>(null)
   let typewriterTimer: ReturnType<typeof setTimeout> | null = null
   let dwellTimer: ReturnType<typeof setTimeout> | null = null
   let cursorTimer: ReturnType<typeof setInterval> | null = null
@@ -67,8 +71,7 @@
       return
     }
     current = item
-    const c = colorMap[item.color] ?? 'var(--thought-muted)'
-    displayColor = c
+    displayColor = severityColor[item.severity] ?? 'var(--thought-muted)'
     displayText = ''
     showCursor = false
     isAnimating = true
@@ -90,29 +93,44 @@
     }
   }
 
-  function enqueue(thought: OrchestratorThought) {
-    if (current && current.text === thought.text) return
+  // Важность severity → порядок в очереди (выше = раньше показываем).
+  function severityRank(severity: string): number {
+    switch (severity) {
+      case 'error': return 3
+      case 'warn':  return 2
+      default:      return 0 // info / success / muted / chatter
+    }
+  }
 
-    if (thought.priority >= 2) {
-      queue = queue.filter(e => e.priority >= 1)
-      queue.unshift(thought)
+  function enqueue(thought: OrchestratorThought) {
+    const item: QueueItem = {
+      text: thought.text,
+      severity: thought.severity,
+      kind: thought.kind,
+      title: thought.title,
+      ts: thought.ts,
+    }
+
+    const rank = severityRank(thought.severity)
+    if (rank >= 2) {
+      // error / warn — показываем вперёд и прерываем текущую анимацию.
+      queue.unshift(item)
       startNext(true)
-    } else if (thought.priority === 1) {
-      const lastEvent = queue.reduce((idx, e, i) => e.priority >= 1 ? i : idx, -1)
-      queue.splice(lastEvent + 1, 0, thought)
-      if (!current) startNext()
     } else {
-      if (queue.filter(e => e.priority === 0).length < 3) queue.push(thought)
+      // Остальные — по порядку, с ограничением длины очереди.
+      if (queue.length < 5) queue.push(item)
       if (!current) startNext()
     }
   }
 
-  let unlisten: (() => void) | null = null
   onMount(async () => {
     unlistenResize = await win.onResized(async () => {
       maximized = await win.isMaximized()
     })
-    version = await getVersion()
+    version = await getVersion().catch(() => {
+      console.error('getVersion failed, using 0.0.0')
+      return '0.0.0'
+    })
 
     // Загрузка changelog в фоне
     const changelogs = await fetchChangelog().catch(() => null)
@@ -123,8 +141,8 @@
       newChangesCount = countNewChanges(changelogs, currentCounter)
     }
 
+    // Подписка на мысли — store сам слушает событие и рассылает их сюда.
     registerThoughtCallback(enqueue)
-    unlisten = await onOrchestratorThought(enqueue)
     const prefersReducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches
     if (!prefersReducedMotion) {
       cursorTimer = setInterval(() => {
@@ -132,12 +150,11 @@
         else if (!current) showCursor = false
       }, 530)
     }
-    enqueue({ text: 'привет, я Груз.', color: 'success', priority: 0 })
+    enqueue({ kind: 'info', text: 'привет, я Груз.', severity: 'success', title: null, progress: null, description: null, ts: Date.now() })
   })
   onDestroy(() => {
     clearTimers()
     if (cursorTimer) clearInterval(cursorTimer)
-    unlisten?.()
     unlistenResize?.()
   })
 </script>
@@ -151,8 +168,9 @@
   >
     <span class="version-text">{newChangesCount > 0 ? `v${displayVersion(version)} (+${newChangesCount})` : `v${displayVersion(version)}`}</span>
   </button>
-  <button class="middle-bar"
+   <button class="middle-bar"
     onclick={() => route = 'orchestrator'}
+    title={current?.title ?? ''}
     use:tooltip={{ text: 'Оркестратор', placement: 'bottom' }}
   >
     <span class="dash" style="color:{displayColor}">——</span>
